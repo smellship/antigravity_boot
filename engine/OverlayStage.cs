@@ -115,6 +115,7 @@ namespace AntigravityBootOverlay
         public Action OnReplayRequested;
         public Action OnNextThemeRequested;
         public Action OnToggleModeRequested;
+        public Action OnResetWidgetRequested;
         public Action<AppConfig> OnGeometryCommitted;
 
         Window overlay;
@@ -409,6 +410,7 @@ namespace AntigravityBootOverlay
             // 悬停快捷播控栏（仅挂件交互模式可见）
             var hudPanel = new StackPanel { Orientation = Orientation.Horizontal };
             hudPanel.Children.Add(MakeHudButton("▶", "重播开屏动画", delegate { if (OnReplayRequested != null) OnReplayRequested(); }));
+            hudPanel.Children.Add(MakeHudButton("↺", "复位到设置按钮上方初始位置", delegate { if (OnResetWidgetRequested != null) OnResetWidgetRequested(); }));
             hudPanel.Children.Add(MakeHudButton("⤢", "切换 挂件 / 全屏模式", delegate { if (OnToggleModeRequested != null) OnToggleModeRequested(); }));
             hudPanel.Children.Add(MakeHudButton("⏭", "切换下一个主题", delegate { if (OnNextThemeRequested != null) OnNextThemeRequested(); }));
             hudPanel.Children.Add(MakeHudButton("✕", "关闭浮层", delegate { Finish(true); }));
@@ -419,7 +421,7 @@ namespace AntigravityBootOverlay
                 Background = new SolidColorBrush(Color.FromArgb(195, 10, 15, 32)),
                 BorderBrush = new SolidColorBrush(Color.FromArgb(95, 186, 230, 253)),
                 BorderThickness = new Thickness(1),
-                Padding = new Thickness(5, 3, 5, 3),
+                Padding = new Thickness(4, 3, 4, 3),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Bottom,
                 Margin = new Thickness(0, 0, 0, 8),
@@ -447,7 +449,7 @@ namespace AntigravityBootOverlay
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Bottom,
                 Cursor = Cursors.SizeNWSE,
-                ToolTip = "拖动调整挂件大小（按住 Shift 锁定 16:9）",
+                ToolTip = "拖动等比缩放挂件（按住 Alt 临时自由拉伸）",
                 Opacity = 0,
                 Visibility = Visibility.Collapsed,
                 Child = gripPath
@@ -483,7 +485,7 @@ namespace AntigravityBootOverlay
             };
             var b = new Border
             {
-                Width = 24,
+                Width = 22,
                 Height = 20,
                 CornerRadius = new CornerRadius(7),
                 Background = Brushes.Transparent,
@@ -584,13 +586,35 @@ namespace AntigravityBootOverlay
                 int curH = dragStartRect.Bottom - dragStartRect.Top;
                 int minW = (int)Math.Round(140 * scale);
                 int maxW = Math.Max(minW, Math.Min(bounds.Right - dragStartRect.Left - 4, (int)Math.Round(720 * scale)));
-                int minH = (int)Math.Round(80 * scale);
+                int minH = (int)Math.Round(78 * scale);
                 int maxH = Math.Max(minH, Math.Min(bounds.Bottom - dragStartRect.Top - 4, (int)Math.Round(480 * scale)));
+
+                bool altDown = (Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt;
+                bool shiftDown = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
+                bool lockRatio = config.WidgetLockAspectRatio ? !altDown : shiftDown;
+
                 int nw = Math.Max(minW, Math.Min(maxW, curW + dx));
                 int nh = Math.Max(minH, Math.Min(maxH, curH + dy));
-                if ((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift)
+                if (lockRatio)
                 {
-                    nh = Math.Max(minH, Math.Min(maxH, (int)Math.Round(nw * 9.0 / 16.0)));
+                    double dyScaled = dy * (16.0 / 9.0);
+                    int candidateW = (Math.Abs(dx) >= Math.Abs(dyScaled))
+                        ? (curW + dx)
+                        : (int)Math.Round((curH + dy) * 16.0 / 9.0);
+                    nw = Math.Max(minW, Math.Min(maxW, candidateW));
+                    nh = (int)Math.Round(nw * 9.0 / 16.0);
+                    if (nh > maxH)
+                    {
+                        nh = maxH;
+                        nw = Math.Max(minW, Math.Min(maxW, (int)Math.Round(nh * 16.0 / 9.0)));
+                        nh = (int)Math.Round(nw * 9.0 / 16.0);
+                    }
+                    else if (nh < minH)
+                    {
+                        nh = minH;
+                        nw = Math.Max(minW, Math.Min(maxW, (int)Math.Round(nh * 16.0 / 9.0)));
+                        nh = (int)Math.Round(nw * 9.0 / 16.0);
+                    }
                 }
                 ApplyOverlayPos(dragStartRect.Left, dragStartRect.Top, nw, nh);
                 UpdateCardClip(currentCornerRadius);
@@ -1054,6 +1078,12 @@ namespace AntigravityBootOverlay
                 if (introMedia != null && !introGone) { try { introMedia.Play(); } catch { } }
                 if (activeLoop != null && introGone) { try { activeLoop.Play(); } catch { } }
             }
+        }
+
+        public void SmoothRelocate()
+        {
+            if (phase == PlayPhase.Done || !IsDockedNow()) return;
+            StartMorph(true, 0.38);
         }
 
         void StartMorph(bool toDocked, double durationSec)

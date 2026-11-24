@@ -38,6 +38,7 @@ export const DEFAULT_CONFIG = {
   widgetCornerRadius: 12,
   widgetOpacity: 0.94,
   widgetClickThrough: false,
+  widgetLockAspectRatio: true,
 };
 
 export const BUILTIN_THEMES = [
@@ -209,7 +210,11 @@ export function clampConfig(raw) {
   cfg.widgetOffsetX = Math.max(0, Math.min(1600, Number(cfg.widgetOffsetX ?? 12)));
   cfg.widgetOffsetY = Math.max(0, Math.min(1200, Number(cfg.widgetOffsetY ?? 52)));
   cfg.widgetWidth = Math.max(140, Math.min(720, Number(cfg.widgetWidth ?? 234)));
-  cfg.widgetHeight = Math.max(80, Math.min(480, Number(cfg.widgetHeight ?? 132)));
+  cfg.widgetLockAspectRatio = cfg.widgetLockAspectRatio !== false;
+  if (cfg.widgetLockAspectRatio) {
+    cfg.widgetHeight = Math.round((cfg.widgetWidth * 9) / 16);
+  }
+  cfg.widgetHeight = Math.max(78, Math.min(480, Number(cfg.widgetHeight ?? 132)));
   cfg.widgetCornerRadius = Math.max(0, Math.min(32, Number(cfg.widgetCornerRadius ?? 12)));
   cfg.widgetOpacity = Math.max(0.2, Math.min(1, Number(cfg.widgetOpacity ?? 0.94)));
   cfg.widgetClickThrough = Boolean(cfg.widgetClickThrough);
@@ -233,7 +238,11 @@ export function saveConfig(dataDir, cfg) {
 
 export function patchConfig(dataDir, patch) {
   const current = loadConfig(dataDir);
-  return saveConfig(dataDir, { ...current, ...(patch || {}) });
+  const next = { ...current, ...(patch || {}) };
+  if (next.widgetLockAspectRatio !== false && patch?.widgetHeight !== undefined && patch?.widgetWidth === undefined) {
+    next.widgetWidth = Math.round((Number(patch.widgetHeight) * 16) / 9);
+  }
+  return saveConfig(dataDir, next);
 }
 
 export function loadThemes(dataDir) {

@@ -173,6 +173,7 @@ namespace AntigravityBootOverlay
             created.OnReplayRequested = delegate { HandlePlay(true, Config.ActiveThemeId, target.Hwnd); };
             created.OnNextThemeRequested = delegate { CycleNextTheme(); };
             created.OnToggleModeRequested = delegate { ToggleDisplayMode(); };
+            created.OnResetWidgetRequested = delegate { ResetWidgetLayout(); };
             created.OnGeometryCommitted = delegate(AppConfig updated) { ConfigStore.SaveConfig(updated); };
             stage = created;
             RefreshTrayMenu();
@@ -223,9 +224,14 @@ namespace AntigravityBootOverlay
             Config.WidgetWidth = 234;
             Config.WidgetHeight = 132;
             Config.WidgetCornerRadius = 12;
+            Config.WidgetLockAspectRatio = true;
             Config.Clamp();
             ConfigStore.SaveConfig(Config);
-            if (stage != null) stage.ApplyConfig(Config, true);
+            if (stage != null)
+            {
+                stage.ApplyConfig(Config, true);
+                stage.SmoothRelocate();
+            }
             return GetStatusMap();
         }
 
@@ -317,6 +323,11 @@ namespace AntigravityBootOverlay
             if (patch.TryGetValue("widgetCornerRadius", out v) && v != null) Config.WidgetCornerRadius = Convert.ToDouble(v, CultureInfo.InvariantCulture);
             if (patch.TryGetValue("widgetOpacity", out v) && v != null) Config.WidgetOpacity = Convert.ToDouble(v, CultureInfo.InvariantCulture);
             if (patch.TryGetValue("widgetClickThrough", out v) && v is bool) Config.WidgetClickThrough = (bool)v;
+            if (patch.TryGetValue("widgetLockAspectRatio", out v) && v is bool) Config.WidgetLockAspectRatio = (bool)v;
+            if (Config.WidgetLockAspectRatio && patch.ContainsKey("widgetHeight") && !patch.ContainsKey("widgetWidth"))
+            {
+                Config.WidgetWidth = Math.Round(Config.WidgetHeight * 16.0 / 9.0);
+            }
 
             Config.Clamp();
             ConfigStore.SaveConfig(Config);
@@ -326,6 +337,8 @@ namespace AntigravityBootOverlay
             {
                 bool sliderTouch = patch.ContainsKey("residualAlpha") || patch.ContainsKey("introVolume") || patch.ContainsKey("widgetOpacity");
                 stage.ApplyConfig(Config, sliderTouch);
+                bool relocate = patch.TryGetValue("smoothRelocate", out v) && v is bool && (bool)v;
+                if (relocate) stage.SmoothRelocate();
                 if (!string.Equals(oldThemeId, Config.ActiveThemeId, StringComparison.OrdinalIgnoreCase))
                 {
                     var win = WindowFinder.FindBest(Config, testTitle);

@@ -37,6 +37,7 @@ node "$env:USERPROFILE\.gemini\config\plugins\antigravity-boot\scripts\boot_ctl.
 - `displayMode`: `widget`（开屏全屏后平滑缩进左下角挂件，默认）/ `widget-always`（全程小窗）/ `fullscreen`（全屏半透明背景）
 - `widgetAnchor`: `bottom-left`（默认，贴在左下角 Settings 上方）/ `bottom-right` / `top-left` / `top-right`
 - `widgetOffsetX` / `widgetOffsetY` / `widgetWidth` / `widgetHeight` / `widgetCornerRadius`: 挂件偏移与尺寸圆角（单位 DIP，默认 `12, 52, 234, 132, 12`）
+- `widgetLockAspectRatio`: `true` / `false`（默认 `true`，拖动或调尺寸时锁定 16:9 比例）
 - `widgetOpacity`: `0.2` ~ `1.0`（挂件清晰度，默认 `0.94`）
 - `widgetClickThrough`: `true` / `false`（关闭时可鼠标悬停快捷播控 & 直接拖动位置/右下角调大小）
 - `playIntro`: `true` / `false`（启动 Antigravity 时是否播开屏）

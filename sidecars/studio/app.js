@@ -191,8 +191,15 @@
                 <span>高度</span>
                 <span class="slider-val" id="val-wh">${Math.round(cfg.widgetHeight ?? 132)}px</span>
               </div>
-              <input type="range" id="rng-wh" min="80" max="420" step="2" value="${Math.round(cfg.widgetHeight ?? 132)}" />
+              <input type="range" id="rng-wh" min="78" max="420" step="2" value="${Math.round(cfg.widgetHeight ?? 132)}" />
             </div>
+          </div>
+          <div class="switch-row" style="margin-top:6px;">
+            <div class="switch-info">
+              <div class="switch-label">锁定 16:9 画面比例</div>
+              <div class="switch-hint">拖动挂件或滑块保持原画比例不畸变（按住 Alt 临时自由拉伸）</div>
+            </div>
+            <input type="checkbox" class="toggle" id="chk-wlock" ${cfg.widgetLockAspectRatio !== false ? 'checked' : ''} />
           </div>
           <div class="slider-row" style="margin-top:8px;">
             <div class="slider-head">
@@ -204,12 +211,12 @@
           <div class="switch-row" style="margin-top:6px;">
             <div class="switch-info">
               <div class="switch-label">挂件点击穿透</div>
-              <div class="switch-hint">关闭时鼠标悬停可快速重播/切主题/拖动调整位置</div>
+              <div class="switch-hint">关闭时鼠标悬停可快速重播/复位/切主题/拖动位置</div>
             </div>
             <input type="checkbox" class="toggle" id="chk-wct" ${cfg.widgetClickThrough ? 'checked' : ''} />
           </div>
           <div style="margin-top:10px;">
-            <button type="button" class="btn btn-sm" id="btn-reset-widget" style="width:100%;">📍 归位到左下角默认位 (234×132)</button>
+            <button type="button" class="btn btn-sm" id="btn-reset-widget" style="width:100%;">↺ 复位到设置按钮上方初始位置 (234×132)</button>
           </div>
         </div>
       ` : ''}
@@ -304,18 +311,48 @@
     });
 
     if (isWidget) {
-      el.querySelector('#sel-wanchor').onchange = (e) => pushConfigPatch({ widgetAnchor: e.target.value }, true);
+      el.querySelector('#sel-wanchor').onchange = (e) => pushConfigPatch({ widgetAnchor: e.target.value, smoothRelocate: true }, true);
       const rngWw = el.querySelector('#rng-ww');
       const valWw = el.querySelector('#val-ww');
-      rngWw.oninput = () => {
-        valWw.textContent = `${rngWw.value}px`;
-        pushConfigPatch({ widgetWidth: Number(rngWw.value) });
-      };
       const rngWh = el.querySelector('#rng-wh');
       const valWh = el.querySelector('#val-wh');
+      const chkWlock = el.querySelector('#chk-wlock');
+
+      rngWw.oninput = () => {
+        const w = Number(rngWw.value);
+        valWw.textContent = `${w}px`;
+        if (chkWlock.checked) {
+          const h = Math.max(78, Math.min(420, Math.round((w * 9) / 16)));
+          rngWh.value = h;
+          valWh.textContent = `${h}px`;
+          pushConfigPatch({ widgetWidth: w, widgetHeight: h });
+        } else {
+          pushConfigPatch({ widgetWidth: w });
+        }
+      };
       rngWh.oninput = () => {
-        valWh.textContent = `${rngWh.value}px`;
-        pushConfigPatch({ widgetHeight: Number(rngWh.value) });
+        const h = Number(rngWh.value);
+        valWh.textContent = `${h}px`;
+        if (chkWlock.checked) {
+          const w = Math.max(140, Math.min(640, Math.round((h * 16) / 9)));
+          rngWw.value = w;
+          valWw.textContent = `${w}px`;
+          pushConfigPatch({ widgetWidth: w, widgetHeight: h });
+        } else {
+          pushConfigPatch({ widgetHeight: h });
+        }
+      };
+      chkWlock.onchange = (e) => {
+        const locked = e.target.checked;
+        if (locked) {
+          const w = Number(rngWw.value);
+          const h = Math.max(78, Math.min(420, Math.round((w * 9) / 16)));
+          rngWh.value = h;
+          valWh.textContent = `${h}px`;
+          pushConfigPatch({ widgetLockAspectRatio: true, widgetWidth: w, widgetHeight: h }, true);
+        } else {
+          pushConfigPatch({ widgetLockAspectRatio: false }, true);
+        }
       };
       const rngWr = el.querySelector('#rng-wr');
       const valWr = el.querySelector('#val-wr');
@@ -326,10 +363,21 @@
       el.querySelector('#chk-wct').onchange = (e) => pushConfigPatch({ widgetClickThrough: e.target.checked }, true);
       el.querySelector('#btn-reset-widget').onclick = async () => {
         try {
-          const r = await api('/api/widget/reset', 'POST', {});
-          state = r.bootstrap;
+          const defaults = {
+            displayMode: 'widget',
+            widgetAnchor: 'bottom-left',
+            widgetOffsetX: 12,
+            widgetOffsetY: 52,
+            widgetWidth: 234,
+            widgetHeight: 132,
+            widgetCornerRadius: 12,
+            widgetLockAspectRatio: true,
+            smoothRelocate: true,
+          };
+          await api('/api/config', 'POST', { patch: defaults });
+          Object.assign(state.config, defaults);
           renderAll();
-          showToast('已归位到左下角 (Settings 上方)');
+          showToast('已复位到设置按钮上方初始位置');
         } catch (e) { showToast(e.message); }
       };
     }

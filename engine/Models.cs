@@ -223,6 +223,7 @@ namespace AntigravityBootOverlay
         public double WidgetCornerRadius;
         public double WidgetOpacity;
         public bool WidgetClickThrough;
+        public bool WidgetLockAspectRatio;
 
         public AppConfig()
         {
@@ -250,6 +251,7 @@ namespace AntigravityBootOverlay
             WidgetCornerRadius = 12;
             WidgetOpacity = 0.94;
             WidgetClickThrough = false;
+            WidgetLockAspectRatio = true;
         }
 
         public void Clamp()
@@ -270,7 +272,8 @@ namespace AntigravityBootOverlay
             WidgetOffsetX = Math.Max(0.0, Math.Min(1600.0, WidgetOffsetX));
             WidgetOffsetY = Math.Max(0.0, Math.Min(1200.0, WidgetOffsetY));
             WidgetWidth = Math.Max(140.0, Math.Min(720.0, WidgetWidth));
-            WidgetHeight = Math.Max(80.0, Math.Min(480.0, WidgetHeight));
+            if (WidgetLockAspectRatio) WidgetHeight = Math.Round(WidgetWidth * 9.0 / 16.0);
+            WidgetHeight = Math.Max(78.0, Math.Min(480.0, WidgetHeight));
             WidgetCornerRadius = Math.Max(0.0, Math.Min(32.0, WidgetCornerRadius));
             WidgetOpacity = Math.Max(0.20, Math.Min(1.0, WidgetOpacity));
         }
@@ -372,6 +375,7 @@ namespace AntigravityBootOverlay
                         c.WidgetCornerRadius = D(d, "widgetCornerRadius", c.WidgetCornerRadius);
                         c.WidgetOpacity = D(d, "widgetOpacity", c.WidgetOpacity);
                         c.WidgetClickThrough = B(d, "widgetClickThrough", c.WidgetClickThrough);
+                        c.WidgetLockAspectRatio = B(d, "widgetLockAspectRatio", c.WidgetLockAspectRatio);
                         object procs;
                         if (d.TryGetValue("targetProcesses", out procs) && procs is object[])
                         {
@@ -437,6 +441,7 @@ namespace AntigravityBootOverlay
             dict["widgetCornerRadius"] = Math.Round(c.WidgetCornerRadius, 1);
             dict["widgetOpacity"] = Math.Round(c.WidgetOpacity, 3);
             dict["widgetClickThrough"] = c.WidgetClickThrough;
+            dict["widgetLockAspectRatio"] = c.WidgetLockAspectRatio;
             return dict;
         }
 
