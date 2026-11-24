@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="28" y1="24" x2="228" y2="232" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1E2B6B"/>
+      <stop offset="50%" stop-color="#312E81"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="bladeA" x1="44" y1="210" x2="212" y2="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.15"/>
+      <stop offset="45%" stop-color="#60A5FA"/>
+      <stop offset="100%" stop-color="#E0F2FE"/>
+    </linearGradient>
+    <linearGradient id="bladeB" x1="46" y1="46" x2="210" y2="210" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F0ABFC"/>
+      <stop offset="55%" stop-color="#818CF8"/>
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0.2"/>
+    </linearGradient>
+    <radialGradient id="starCore" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="45%" stop-color="#BAE6FD"/>
+      <stop offset="100%" stop-color="#6366F1"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#60A5FA" stop-opacity="0.55"/>
+      <stop offset="60%" stop-color="#A855F7" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#312E81" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Outer rounded badge with ~10% margin (26px padding on 256 canvas) -->
+  <rect x="26" y="26" width="204" height="204" rx="48" fill="url(#bgGrad)" stroke="#93C5FD" stroke-opacity="0.45" stroke-width="3"/>
+
+  <!-- Soft cosmic glow -->
+  <circle cx="128" cy="128" r="76" fill="url(#glow)"/>
+
+  <!-- Subtle orbital ring -->
+  <ellipse cx="128" cy="128" rx="76" ry="30" transform="rotate(-28 128 128)" stroke="#7DD3FC" stroke-opacity="0.45" stroke-width="2.5" stroke-dasharray="10 7"/>
+
+  <!-- Twin stylized light-arc blades -->
+  <path d="M58 194 C86 146, 134 94, 198 62 C164 114, 114 162, 64 198 Z" fill="url(#bladeA)" opacity="0.92"/>
+  <path d="M62 60 C112 94, 162 142, 196 196 C144 166, 94 118, 58 66 Z" fill="url(#bladeB)" opacity="0.88"/>
+
+  <!-- Luminous four-point Gemini star -->
+  <path d="M128 54 C133 102, 154 123, 202 128 C154 133, 133 154, 128 202 C123 154, 102 133, 54 128 C102 123, 123 102, 128 54 Z" fill="url(#starCore)"/>
+  <circle cx="128" cy="128" r="10" fill="#FFFFFF"/>
+
+  <!-- Orbital sparkles -->
+  <path d="M182 70 L185 78 L193 81 L185 84 L182 92 L179 84 L171 81 L179 78 Z" fill="#FDE68A"/>
+  <circle cx="76" cy="168" r="4" fill="#93C5FD"/>
+  <circle cx="176" cy="176" r="3" fill="#DDD6FE"/>
+</svg>

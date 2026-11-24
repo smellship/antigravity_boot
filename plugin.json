@@ -1,0 +1,17 @@
+{
+  "name": "antigravity-boot",
+  "displayName": "Antigravity Boot Studio · 开机动画工坊",
+  "version": "1.0.0",
+  "description": "Windows 原生 Antigravity 开机动画与动态氛围背景插件：内置离线星穹矢量主题、侧边栏可视化控制台、一键获取官方双剑少女等素材包、本地视频/壁纸自定义主题、专注自动变淡与节能守护，零入侵不改应用本体。",
+  "logo": "assets/logo.svg",
+  "author": {
+    "name": "Antigravity Boot Studio"
+  },
+  "homepage": "https://github.com/smellship/antigravity_boot",
+  "repository": "https://github.com/smellship/antigravity_boot",
+  "suggestedPrompts": [
+    "打开开机动画工坊控制台，帮我播放一次 Antigravity 开机动画",
+    "一键下载 Gemini 双剑少女官方素材包并设为当前开机主题",
+    "把循环背景透明度调到 18% 并开启编码专注自动变淡"
+  ]
+}

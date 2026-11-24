@@ -1,0 +1,36 @@
+# Build & runtime outputs
+bin/
+build/
+dist/
+*.exe
+*.pdb
+*.dll
+*.log
+node_modules/
+data/
+packs/
+tmp/
+.tmp/
+
+# Downloaded or user-supplied media assets (keep third-party assets out of git)
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.wmv
+*.webm
+*.mp3
+*.wav
+*.part
+*.tmp
+packs/*.jpg
+packs/*.png
+packs/*.ttf
+
+# OS & editor junk
+.DS_Store
+Thumbs.db
+desktop.ini
+*.user
+*.suo
+.vs/
