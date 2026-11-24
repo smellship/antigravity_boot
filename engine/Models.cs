@@ -154,6 +154,7 @@ namespace AntigravityBootOverlay
         public bool Builtin;
         public string IntroPath;
         public string LoopPath;
+        public string WidgetLoopPath;
         public string ImagePath;
         public string PreviewPath;
         public string FontPath;
@@ -224,6 +225,9 @@ namespace AntigravityBootOverlay
         public double WidgetOpacity;
         public bool WidgetClickThrough;
         public bool WidgetLockAspectRatio;
+        public bool LowPowerLoop;
+        public bool PauseWhenUnfocused;
+        public double UnfocusPauseDelaySeconds;
 
         public AppConfig()
         {
@@ -252,6 +256,9 @@ namespace AntigravityBootOverlay
             WidgetOpacity = 0.94;
             WidgetClickThrough = false;
             WidgetLockAspectRatio = true;
+            LowPowerLoop = true;
+            PauseWhenUnfocused = true;
+            UnfocusPauseDelaySeconds = 3.0;
         }
 
         public void Clamp()
@@ -276,6 +283,7 @@ namespace AntigravityBootOverlay
             WidgetHeight = Math.Max(78.0, Math.Min(480.0, WidgetHeight));
             WidgetCornerRadius = Math.Max(0.0, Math.Min(32.0, WidgetCornerRadius));
             WidgetOpacity = Math.Max(0.20, Math.Min(1.0, WidgetOpacity));
+            UnfocusPauseDelaySeconds = Math.Max(0.5, Math.Min(30.0, UnfocusPauseDelaySeconds));
         }
     }
 
@@ -376,6 +384,9 @@ namespace AntigravityBootOverlay
                         c.WidgetOpacity = D(d, "widgetOpacity", c.WidgetOpacity);
                         c.WidgetClickThrough = B(d, "widgetClickThrough", c.WidgetClickThrough);
                         c.WidgetLockAspectRatio = B(d, "widgetLockAspectRatio", c.WidgetLockAspectRatio);
+                        c.LowPowerLoop = B(d, "lowPowerLoop", c.LowPowerLoop);
+                        c.PauseWhenUnfocused = B(d, "pauseWhenUnfocused", c.PauseWhenUnfocused);
+                        c.UnfocusPauseDelaySeconds = D(d, "unfocusPauseDelaySeconds", c.UnfocusPauseDelaySeconds);
                         object procs;
                         if (d.TryGetValue("targetProcesses", out procs) && procs is object[])
                         {
@@ -442,6 +453,9 @@ namespace AntigravityBootOverlay
             dict["widgetOpacity"] = Math.Round(c.WidgetOpacity, 3);
             dict["widgetClickThrough"] = c.WidgetClickThrough;
             dict["widgetLockAspectRatio"] = c.WidgetLockAspectRatio;
+            dict["lowPowerLoop"] = c.LowPowerLoop;
+            dict["pauseWhenUnfocused"] = c.PauseWhenUnfocused;
+            dict["unfocusPauseDelaySeconds"] = Math.Round(c.UnfocusPauseDelaySeconds, 1);
             return dict;
         }
 
@@ -498,6 +512,7 @@ namespace AntigravityBootOverlay
             t.Builtin = B(d, "builtin", id == "stellar-aurora");
             t.IntroPath = SAllowEmpty(d, "introPath", "");
             t.LoopPath = SAllowEmpty(d, "loopPath", "");
+            t.WidgetLoopPath = SAllowEmpty(d, "widgetLoopPath", "");
             t.ImagePath = SAllowEmpty(d, "imagePath", "");
             t.PreviewPath = SAllowEmpty(d, "previewPath", "");
             t.FontPath = SAllowEmpty(d, "fontPath", "");
@@ -549,6 +564,7 @@ namespace AntigravityBootOverlay
             d["builtin"] = t.Builtin;
             d["introPath"] = t.IntroPath ?? "";
             d["loopPath"] = t.LoopPath ?? "";
+            d["widgetLoopPath"] = t.WidgetLoopPath ?? "";
             d["imagePath"] = t.ImagePath ?? "";
             d["previewPath"] = t.PreviewPath ?? "";
             d["fontPath"] = t.FontPath ?? "";

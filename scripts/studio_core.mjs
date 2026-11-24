@@ -12,7 +12,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const TRANSCODE_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'transcode_widget.ps1');
 
 export const DEFAULT_CONFIG = {
   activeThemeId: 'stellar-aurora',
@@ -39,6 +42,9 @@ export const DEFAULT_CONFIG = {
   widgetOpacity: 0.94,
   widgetClickThrough: false,
   widgetLockAspectRatio: true,
+  lowPowerLoop: true,
+  pauseWhenUnfocused: true,
+  unfocusPauseDelaySeconds: 3.0,
 };
 
 export const BUILTIN_THEMES = [
@@ -218,6 +224,9 @@ export function clampConfig(raw) {
   cfg.widgetCornerRadius = Math.max(0, Math.min(32, Number(cfg.widgetCornerRadius ?? 12)));
   cfg.widgetOpacity = Math.max(0.2, Math.min(1, Number(cfg.widgetOpacity ?? 0.94)));
   cfg.widgetClickThrough = Boolean(cfg.widgetClickThrough);
+  cfg.lowPowerLoop = cfg.lowPowerLoop !== false;
+  cfg.pauseWhenUnfocused = cfg.pauseWhenUnfocused !== false;
+  cfg.unfocusPauseDelaySeconds = Math.max(0.5, Math.min(30, Number(cfg.unfocusPauseDelaySeconds ?? 3.0)));
   return cfg;
 }
 
@@ -349,6 +358,7 @@ export function createCustomTheme(dataDir, opts) {
     builtin: false,
     introPath: stageFile(introSrc, 'intro'),
     loopPath: stageFile(loopSrc, 'loop'),
+    widgetLoopPath: '',
     imagePath: stageFile(imageSrc, 'wallpaper'),
     previewPath: kind === 'image' ? stageFile(imageSrc, 'preview') : '',
     fontPath: '',
@@ -362,6 +372,12 @@ export function createCustomTheme(dataDir, opts) {
   };
 
   upsertTheme(dataDir, theme);
+  if (theme.kind === 'video' && theme.loopPath) {
+    try {
+      const opt = ensureWidgetLightCache(dataDir, theme.id);
+      if (opt?.ok) theme.widgetLoopPath = opt.outputPath;
+    } catch { }
+  }
   return theme;
 }
 
@@ -469,6 +485,7 @@ export async function downloadOfficialPack(dataDir, packId, onProgress) {
     builtin: false,
     introPath: join(destDir, 'intro.mp4'),
     loopPath: join(destDir, 'loop.mp4'),
+    widgetLoopPath: '',
     imagePath: '',
     previewPath: join(destDir, 'preview.jpg'),
     fontPath: pack.files['LibreBodoni-Italic.ttf'] ? join(destDir, 'LibreBodoni-Italic.ttf') : '',
@@ -484,6 +501,20 @@ export async function downloadOfficialPack(dataDir, packId, onProgress) {
   upsertTheme(dataDir, theme);
   onProgress?.({
     packId: pack.id,
+    status: 'downloading',
+    file: '正在生成 640×360 轻量挂件缓存...',
+    fileIndex: entries.length,
+    fileCount: entries.length,
+    received: 1,
+    total: 1,
+    percent: 98,
+  });
+  try {
+    const opt = ensureWidgetLightCache(dataDir, theme.id);
+    if (opt?.ok) theme.widgetLoopPath = opt.outputPath;
+  } catch { }
+  onProgress?.({
+    packId: pack.id,
     status: 'done',
     file: '',
     fileIndex: entries.length,
@@ -493,6 +524,28 @@ export async function downloadOfficialPack(dataDir, packId, onProgress) {
     percent: 100,
   });
   return theme;
+}
+
+export function ensureWidgetLightCache(dataDir, themeId) {
+  const themes = loadThemes(dataDir);
+  const target = themes.find((t) => t.id === themeId);
+  if (!target) throw new Error(`未找到主题：${themeId}`);
+  if (target.kind !== 'video' || !target.loopPath || !existsSync(target.loopPath)) {
+    return { ok: false, skipped: true, reason: '该主题没有循环视频文件' };
+  }
+  if (!existsSync(TRANSCODE_SCRIPT)) {
+    throw new Error(`找不到转码脚本：${TRANSCODE_SCRIPT}`);
+  }
+  const outPath = join(dirname(target.loopPath), 'loop_widget.mp4');
+  const raw = execFileSync(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', TRANSCODE_SCRIPT, '-InputPath', target.loopPath, '-OutputPath', outPath],
+    { encoding: 'utf-8', timeout: 120000 }
+  ).trim();
+  const parsed = JSON.parse(raw);
+  target.widgetLoopPath = outPath;
+  upsertTheme(dataDir, target);
+  return { ok: true, themeId: target.id, ...parsed };
 }
 
 export function isPackInstalled(dataDir, packId) {

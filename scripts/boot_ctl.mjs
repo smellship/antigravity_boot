@@ -8,6 +8,7 @@ import {
   createCustomTheme,
   deleteTheme,
   downloadOfficialPack,
+  ensureWidgetLightCache,
   getAutostartStatus,
   isOverlayAlive,
   isPackInstalled,
@@ -75,7 +76,7 @@ async function main() {
   node scripts/boot_ctl.mjs skip
   node scripts/boot_ctl.mjs stop
   node scripts/boot_ctl.mjs config --set key=value [--set key2=value2]
-  node scripts/boot_ctl.mjs themes list|select <id>|next|delete <id>
+  node scripts/boot_ctl.mjs themes list|select <id>|next|optimize [<id>]|delete <id>
   node scripts/boot_ctl.mjs widget reset
   node scripts/boot_ctl.mjs packs list|download <packId>
   node scripts/boot_ctl.mjs custom add --name <name> [--intro <path>] [--loop <path>] [--image <path>] [--fade-start <sec>]
@@ -180,6 +181,14 @@ async function main() {
       const next = themes[(idx + 1) % themes.length];
       patchConfig(dataDir, { activeThemeId: next.id });
       printJson({ ok: true, activeThemeId: next.id, theme: next, appliedLive: false });
+      return;
+    }
+    if (sub === 'optimize') {
+      const cfg = loadConfig(dataDir);
+      const id = positional[2] || cfg.activeThemeId;
+      const res = ensureWidgetLightCache(dataDir, id);
+      await callOverlay(dataDir, 'POST', '/reload', {});
+      printJson(res);
       return;
     }
     if (sub === 'delete') {

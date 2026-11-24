@@ -26,7 +26,7 @@ node "$env:USERPROFILE\.gemini\config\plugins\antigravity-boot\scripts\boot_ctl.
 | 仅开启半透明循环动态背景 | `node ".../boot_ctl.mjs" play --mode loop` |
 | 跳过当前开屏 / 淡出关闭浮层 | `node ".../boot_ctl.mjs" skip` 或 `stop` |
 | 实时调透明度 / 音量 / 专注变淡 | `node ".../boot_ctl.mjs" config --set residualAlpha=0.18 --set focusDimEnabled=true` |
-| 列出 / 切换本地主题 | `node ".../boot_ctl.mjs" themes list` / `themes select <id>` / `themes next` |
+| 列出 / 切换本地主题 | `node ".../boot_ctl.mjs" themes list` / `themes select <id>` / `themes next` / `themes optimize [<id>]` |
 | 挂件归位左下角 (Settings 上方) | `node ".../boot_ctl.mjs" widget reset` |
 | 列出 / 下载官方同人素材包 | `node ".../boot_ctl.mjs" packs list` / `packs download gemini-twinblades` |
 | 添加自定义本地视频或壁纸主题 | `node ".../boot_ctl.mjs" custom add --name "<名称>" --intro "<路径>" --loop "<路径>"`（或 `--image "<路径>"`） |
@@ -50,6 +50,8 @@ node "$env:USERPROFILE\.gemini\config\plugins\antigravity-boot\scripts\boot_ctl.
 - `focusDimFactor`: `0.1` ~ `1.0`（专注变淡保留比例）
 - `focusIdleSeconds`: `1.0` ~ `30.0`（停下输入多少秒后平滑回亮）
 - `pauseOnBatterySaver`: `true` / `false`（系统省电模式自动暂停解码）
+- `lowPowerLoop`: `true` / `false`（默认 `true`，开启单管线循环并优先使用 640×360 H.264 挂件轻量缓存）
+- `pauseWhenUnfocused`: `true` / `false`（默认 `true`，切到其他窗口 3 秒后自动暂停渲染）
 - `showTrayIcon`: `true` / `false`（是否显示系统托盘图标）
 
 ## 3. 官方可选素材包 ID（需用户主动要求下载时拉取）

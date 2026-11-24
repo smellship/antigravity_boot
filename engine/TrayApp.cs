@@ -324,6 +324,9 @@ namespace AntigravityBootOverlay
             if (patch.TryGetValue("widgetOpacity", out v) && v != null) Config.WidgetOpacity = Convert.ToDouble(v, CultureInfo.InvariantCulture);
             if (patch.TryGetValue("widgetClickThrough", out v) && v is bool) Config.WidgetClickThrough = (bool)v;
             if (patch.TryGetValue("widgetLockAspectRatio", out v) && v is bool) Config.WidgetLockAspectRatio = (bool)v;
+            if (patch.TryGetValue("lowPowerLoop", out v) && v is bool) Config.LowPowerLoop = (bool)v;
+            if (patch.TryGetValue("pauseWhenUnfocused", out v) && v is bool) Config.PauseWhenUnfocused = (bool)v;
+            if (patch.TryGetValue("unfocusPauseDelaySeconds", out v) && v != null) Config.UnfocusPauseDelaySeconds = Convert.ToDouble(v, CultureInfo.InvariantCulture);
             if (Config.WidgetLockAspectRatio && patch.ContainsKey("widgetHeight") && !patch.ContainsKey("widgetWidth"))
             {
                 Config.WidgetWidth = Math.Round(Config.WidgetHeight * 16.0 / 9.0);
@@ -388,6 +391,8 @@ namespace AntigravityBootOverlay
                 sd["effectiveAlpha"] = snap.EffectiveAlpha;
                 sd["pausedReason"] = snap.PausedReason;
                 sd["memoryMb"] = snap.MemoryMb;
+                sd["threadCount"] = snap.ThreadCount;
+                sd["usingLightCache"] = snap.UsingLightCache;
                 res["stage"] = sd;
             }
             else
@@ -403,8 +408,16 @@ namespace AntigravityBootOverlay
                 sd["recoveries"] = 0;
                 sd["effectiveAlpha"] = 0.0;
                 sd["pausedReason"] = "";
-                try { using (var pr = Process.GetCurrentProcess()) sd["memoryMb"] = pr.WorkingSet64 / (1024 * 1024); }
-                catch { sd["memoryMb"] = 0; }
+                sd["usingLightCache"] = false;
+                try
+                {
+                    using (var pr = Process.GetCurrentProcess())
+                    {
+                        sd["memoryMb"] = pr.WorkingSet64 / (1024 * 1024);
+                        sd["threadCount"] = pr.Threads.Count;
+                    }
+                }
+                catch { sd["memoryMb"] = 0; sd["threadCount"] = 0; }
                 res["stage"] = sd;
             }
 

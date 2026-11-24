@@ -99,6 +99,8 @@ namespace AntigravityBootOverlay
         public double EffectiveAlpha;
         public string PausedReason;
         public long MemoryMb;
+        public int ThreadCount;
+        public bool UsingLightCache;
     }
 
     public class OverlayStage
@@ -142,11 +144,13 @@ namespace AntigravityBootOverlay
         // Watchdog & power events
         readonly Stopwatch clock = Stopwatch.StartNew();
         long nextSampleMs, lastSampleMs, lastMoveMs, lastRecoverMs = -1, pendingAt;
-        long nextPowerCheckMs, nextProcRenderMs;
+        long nextPowerCheckMs, nextProcRenderMs, nextFocusCheckMs;
         double lastPos = -1;
         int laps, recoveries, failStreak, missedEnds;
         bool verifying;
         string pendingWhy;
+        string activeLoopPath = "";
+        bool usingLightCache;
         Dispatcher disp;
         SessionSwitchEventHandler onSession;
         EventHandler onDisplay;
@@ -157,7 +161,8 @@ namespace AntigravityBootOverlay
         SubtitleElement sub;
         DispatcherTimer tick;
         int currentSub = -1;
-        bool introGone, hidden, batteryPaused;
+        bool introGone, hidden, batteryPaused, sessionLocked, displayOff, unfocusedPaused, mouseOverWidget;
+        DateTime? unfocusedSince;
         string pausedReason = "";
 
         Native.RECT lastTargetBounds;
@@ -350,12 +355,28 @@ namespace AntigravityBootOverlay
             onSession = delegate(object s, SessionSwitchEventArgs e)
             {
                 var r = e.Reason;
-                if (r == SessionSwitchReason.SessionUnlock || r == SessionSwitchReason.ConsoleConnect || r == SessionSwitchReason.RemoteConnect)
-                    disp.BeginInvoke(new Action(delegate { LaterRebuild("解锁 / 切回桌面（" + r + "）", 2000); }));
+                if (r == SessionSwitchReason.SessionLock)
+                {
+                    disp.BeginInvoke(new Action(delegate { sessionLocked = true; UpdatePauseState(); }));
+                }
+                else if (r == SessionSwitchReason.SessionUnlock || r == SessionSwitchReason.ConsoleConnect || r == SessionSwitchReason.RemoteConnect)
+                {
+                    disp.BeginInvoke(new Action(delegate
+                    {
+                        sessionLocked = false;
+                        UpdatePauseState();
+                        if (Theme.Kind == "video" && phase == PlayPhase.Revealed && introGone && !IsAnyPaused())
+                            LaterRebuild("解锁 / 切回桌面（" + r + "）", 1500);
+                    }));
+                }
             };
             onDisplay = delegate
             {
-                disp.BeginInvoke(new Action(delegate { LaterRebuild("显示器配置变化", 1500); }));
+                disp.BeginInvoke(new Action(delegate
+                {
+                    if (!IsAnyPaused() && Theme.Kind == "video" && phase == PlayPhase.Revealed && introGone)
+                        LaterRebuild("显示器配置变化", 1500);
+                }));
             };
             try
             {
@@ -463,8 +484,18 @@ namespace AntigravityBootOverlay
             innerHost.Children.Add(resizeGrip);
 
             // 鼠标悬停显示 HUD 与拖动挂件位置
-            cardFrame.MouseEnter += delegate { SetHudVisible(true); };
-            cardFrame.MouseLeave += delegate { if (!isDragging) SetHudVisible(false); };
+            cardFrame.MouseEnter += delegate
+            {
+                mouseOverWidget = true;
+                unfocusedSince = null;
+                if (unfocusedPaused) { unfocusedPaused = false; UpdatePauseState(); }
+                SetHudVisible(true);
+            };
+            cardFrame.MouseLeave += delegate
+            {
+                mouseOverWidget = false;
+                if (!isDragging) SetHudVisible(false);
+            };
             cardFrame.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
             {
                 if (!IsInteractiveDocked() || e.Handled) return;
@@ -712,21 +743,15 @@ namespace AntigravityBootOverlay
                 return;
             }
 
-            if (hasVideoLoop)
+            if (hasVideoLoop && (!withIntro || !hasVideoIntro || !config.LowPowerLoop))
             {
-                loopA = MakeLoopPlayer(Theme.LoopPath);
-                loopB = MakeLoopPlayer(Theme.LoopPath);
-                Panel.SetZIndex(loopA, 1);
-                Panel.SetZIndex(loopB, 0);
-                contentGrid.Children.Add(loopA);
-                contentGrid.Children.Add(loopB);
-                activeLoop = loopA;
+                EnsureLoopPlayersCreated();
             }
 
             if (withIntro && hasVideoIntro)
             {
                 contentGrid.Background = Brushes.Black;
-                introMedia = MakePlayer(Theme.IntroPath, false);
+                introMedia = MakePlayer(Theme.IntroPath, false, false);
                 introMedia.Volume = config.IntroVolume;
                 Panel.SetZIndex(introMedia, 2);
                 contentGrid.Children.Add(introMedia);
@@ -740,6 +765,69 @@ namespace AntigravityBootOverlay
             else
             {
                 introGone = true;
+            }
+        }
+
+        string ResolveLoopVideoPath()
+        {
+            usingLightCache = false;
+            if (string.IsNullOrEmpty(Theme.LoopPath)) return "";
+            bool preferLight = config.LowPowerLoop && (config.DisplayMode != "fullscreen" || IsDockedNow());
+            if (preferLight)
+            {
+                if (!string.IsNullOrEmpty(Theme.WidgetLoopPath) && File.Exists(Theme.WidgetLoopPath))
+                {
+                    usingLightCache = true;
+                    return Theme.WidgetLoopPath;
+                }
+                try
+                {
+                    string sibling = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(Theme.LoopPath), "loop_widget.mp4");
+                    if (File.Exists(sibling))
+                    {
+                        usingLightCache = true;
+                        return sibling;
+                    }
+                }
+                catch { }
+            }
+            return Theme.LoopPath;
+        }
+
+        void EnsureLoopPlayersCreated()
+        {
+            if (!hasVideoLoop) return;
+            string loopPath = ResolveLoopVideoPath();
+            if (string.IsNullOrEmpty(loopPath) || !File.Exists(loopPath)) return;
+
+            if (config.LowPowerLoop)
+            {
+                if (loopB != null) { DisposePlayer(loopB); loopB = null; }
+                if (loopA == null)
+                {
+                    loopA = MakeLoopPlayer(loopPath, false);
+                    activeLoopPath = loopPath;
+                    Panel.SetZIndex(loopA, 1);
+                    contentGrid.Children.Add(loopA);
+                    activeLoop = loopA;
+                }
+            }
+            else
+            {
+                if (loopA == null)
+                {
+                    loopA = MakeLoopPlayer(loopPath, true);
+                    activeLoopPath = loopPath;
+                    Panel.SetZIndex(loopA, 1);
+                    contentGrid.Children.Add(loopA);
+                    activeLoop = loopA;
+                }
+                if (loopB == null)
+                {
+                    loopB = MakeLoopPlayer(loopPath, true);
+                    Panel.SetZIndex(loopB, 0);
+                    contentGrid.Children.Add(loopB);
+                }
             }
         }
 
@@ -768,15 +856,24 @@ namespace AntigravityBootOverlay
                 introMedia.Play();
                 Log.W("开始播放视频开屏：" + Theme.Id + "（模式=" + config.DisplayMode + "），目标窗口 " + Target.Hwnd);
             }
-            else if (hasVideoLoop && loopA != null)
+            else if (hasVideoLoop)
             {
-                introGone = true;
-                loopA.Play();
-                activeLoop = loopA;
-                phase = PlayPhase.Revealed;
-                UpdateDockDecorations();
-                RampAlpha(revealedAlpha, Theme.FadeDurationSeconds, null);
-                Log.W("直接开启视频循环背景：" + Theme.Id + "（模式=" + config.DisplayMode + "），目标窗口 " + Target.Hwnd);
+                EnsureLoopPlayersCreated();
+                if (loopA != null)
+                {
+                    introGone = true;
+                    loopA.Play();
+                    activeLoop = loopA;
+                    phase = PlayPhase.Revealed;
+                    UpdateDockDecorations();
+                    UpdateTickInterval();
+                    RampAlpha(revealedAlpha, Theme.FadeDurationSeconds, null);
+                    Log.W("直接开启视频循环背景：" + Theme.Id + "（模式=" + config.DisplayMode + " 轻量缓存=" + usingLightCache + "），目标窗口 " + Target.Hwnd);
+                }
+                else
+                {
+                    Finish(true);
+                }
             }
             else
             {
@@ -789,7 +886,7 @@ namespace AntigravityBootOverlay
             return string.Equals(mode, "Uniform", StringComparison.OrdinalIgnoreCase) ? Stretch.Uniform : Stretch.UniformToFill;
         }
 
-        MediaElement MakePlayer(string path, bool muted)
+        MediaElement MakePlayer(string path, bool muted, bool primeFirstFrame)
         {
             var m = new MediaElement
             {
@@ -797,30 +894,35 @@ namespace AntigravityBootOverlay
                 UnloadedBehavior = MediaState.Manual,
                 Stretch = ParseStretch(config.StretchMode),
                 IsMuted = muted,
-                ScrubbingEnabled = muted,
+                ScrubbingEnabled = primeFirstFrame,
                 Source = new Uri(System.IO.Path.GetFullPath(path), UriKind.Absolute)
             };
-            if (muted)
+            if (primeFirstFrame)
             {
                 bool primed = false;
-                m.MediaOpened += delegate
+                RoutedEventHandler handler = null;
+                handler = delegate
                 {
                     if (primed) return;
                     primed = true;
+                    m.MediaOpened -= handler;
+                    m.Tag = null;
                     if (m != activeLoop || (phase == PlayPhase.Intro && withIntro && hasVideoIntro))
                     {
                         m.Pause();
                         m.Position = TimeSpan.Zero;
                     }
                 };
+                m.Tag = handler;
+                m.MediaOpened += handler;
                 m.Play();
             }
             return m;
         }
 
-        MediaElement MakeLoopPlayer(string path)
+        MediaElement MakeLoopPlayer(string path, bool primeFirstFrame)
         {
-            var m = MakePlayer(path, true);
+            var m = MakePlayer(path, true, primeFirstFrame);
             m.MediaEnded += OnLoopEnded;
             m.MediaFailed += OnLoopFailed;
             return m;
@@ -832,6 +934,15 @@ namespace AntigravityBootOverlay
         {
             var m = s as MediaElement;
             if (m == null || m != activeLoop || phase == PlayPhase.Done) return;
+            if (config.LowPowerLoop || loopB == null)
+            {
+                m.Position = TimeSpan.Zero;
+                m.Play();
+                laps++;
+                lastMoveMs = clock.ElapsedMilliseconds;
+                lastPos = -1;
+                return;
+            }
             SwapLoop(m, OtherLoop(m));
         }
 
@@ -839,7 +950,7 @@ namespace AntigravityBootOverlay
         {
             if (s != loopA && s != loopB) return;
             Log.W("循环播放器报错：" + (e.ErrorException != null ? e.ErrorException.Message : "未知"));
-            LaterRebuild("播放器报错", 600);
+            if (!IsAnyPaused()) LaterRebuild("播放器报错", 600);
         }
 
         void DisposePlayer(MediaElement m)
@@ -847,7 +958,12 @@ namespace AntigravityBootOverlay
             if (m == null) return;
             m.MediaEnded -= OnLoopEnded;
             m.MediaFailed -= OnLoopFailed;
-            try { m.Stop(); m.Close(); } catch { }
+            if (m.Tag is RoutedEventHandler)
+            {
+                m.MediaOpened -= (RoutedEventHandler)m.Tag;
+                m.Tag = null;
+            }
+            try { m.Stop(); m.Close(); m.Source = null; } catch { }
             contentGrid.Children.Remove(m);
         }
 
@@ -886,35 +1002,26 @@ namespace AntigravityBootOverlay
             var to = swapTo;
             swapFrom = null;
             swapTo = null;
-            if (from == introMedia)
+            if (from != null && from == introMedia)
             {
-                if (introMedia != null)
-                {
-                    introMedia.Visibility = Visibility.Collapsed;
-                    try { introMedia.Stop(); introMedia.Close(); } catch { }
-                }
+                DisposePlayer(introMedia);
+                introMedia = null;
+                GC.Collect(1, GCCollectionMode.Optimized);
                 return;
             }
             if (to != null) Panel.SetZIndex(to, 1);
             if (from != null) Panel.SetZIndex(from, 0);
             laps++;
-            if (laps % 10 == 0 && from != null) ReplaceStandby(from);
-            else if (from != null) { from.Pause(); from.Position = TimeSpan.Zero; }
-        }
-
-        void ReplaceStandby(MediaElement old)
-        {
-            if (string.IsNullOrEmpty(Theme.LoopPath) || !File.Exists(Theme.LoopPath)) return;
-            var fresh = MakeLoopPlayer(Theme.LoopPath);
-            Panel.SetZIndex(fresh, 0);
-            contentGrid.Children.Add(fresh);
-            if (old == loopA) loopA = fresh; else loopB = fresh;
-            DisposePlayer(old);
+            if (from != null)
+            {
+                from.Pause();
+                from.Position = TimeSpan.Zero;
+            }
         }
 
         void LaterRebuild(string why, int delayMs)
         {
-            if (phase == PlayPhase.Done || Theme.Kind != "video" || !hasVideoLoop) return;
+            if (phase == PlayPhase.Done || Theme.Kind != "video" || !hasVideoLoop || IsAnyPaused()) return;
             pendingWhy = why;
             pendingAt = clock.ElapsedMilliseconds + delayMs;
         }
@@ -922,6 +1029,7 @@ namespace AntigravityBootOverlay
         bool RebuildLoops(string why)
         {
             if (phase == PlayPhase.Done || phase == PlayPhase.Ending || Theme.Kind != "video" || !hasVideoLoop) return true;
+            if (IsAnyPaused()) return false;
             long now = clock.ElapsedMilliseconds;
             long gap = failStreak < 3 ? 8000 : 60000;
             if (lastRecoverMs >= 0 && now - lastRecoverMs < gap) return false;
@@ -929,7 +1037,10 @@ namespace AntigravityBootOverlay
             recoveries++;
             lastRecoverMs = now;
 
-            Log.W("循环背景自愈恢复（" + why + "）：第 " + recoveries + " 次，已循环 " + laps + " 圈");
+            string loopPath = ResolveLoopVideoPath();
+            if (string.IsNullOrEmpty(loopPath) || !File.Exists(loopPath)) return true;
+
+            Log.W("循环背景重建（" + why + "）：第 " + recoveries + " 次，已循环 " + laps + " 圈 | 轻量缓存=" + usingLightCache);
             if (swapFrom != null && swapFrom == introMedia) FinishSwap();
 
             var old = swapFrom != null ? swapFrom : activeLoop;
@@ -939,6 +1050,8 @@ namespace AntigravityBootOverlay
             retiring = null;
             if (loopA != old) DisposePlayer(loopA);
             if (loopB != old) DisposePlayer(loopB);
+            loopA = null;
+            loopB = null;
             if (old != null)
             {
                 old.MediaEnded -= OnLoopEnded;
@@ -947,16 +1060,13 @@ namespace AntigravityBootOverlay
                 retiring = old;
                 retireT0 = now;
             }
-            loopA = MakeLoopPlayer(Theme.LoopPath);
-            loopB = MakeLoopPlayer(Theme.LoopPath);
-            Panel.SetZIndex(loopA, 1);
-            Panel.SetZIndex(loopB, 0);
-            contentGrid.Children.Add(loopA);
-            contentGrid.Children.Add(loopB);
+            EnsureLoopPlayersCreated();
+            if (loopA != null) loopA.Play();
             activeLoop = loopA;
             verifying = true;
             lastMoveMs = now;
             lastPos = -1;
+            GC.Collect(1, GCCollectionMode.Optimized);
             return true;
         }
 
@@ -978,7 +1088,7 @@ namespace AntigravityBootOverlay
 
             bool timerGap = lastSampleMs > 0 && now - lastSampleMs > 2000;
             lastSampleMs = now;
-            if (timerGap || phase != PlayPhase.Revealed || !introGone || hidden || batteryPaused || activeLoop == null)
+            if (timerGap || phase != PlayPhase.Revealed || !introGone || IsAnyPaused() || activeLoop == null)
             {
                 lastMoveMs = now;
                 lastPos = -1;
@@ -1002,10 +1112,19 @@ namespace AntigravityBootOverlay
             if (stuck >= 400 && swapFrom == null && activeLoop.NaturalDuration.HasTimeSpan
                 && p >= activeLoop.NaturalDuration.TimeSpan.TotalSeconds - 0.08)
             {
-                missedEnds++;
-                if (missedEnds <= 20 || missedEnds % 100 == 0)
-                    Log.W("循环段到末尾未收到 MediaEnded，手动无缝接上（第 " + missedEnds + " 次）");
-                SwapLoop(activeLoop, OtherLoop(activeLoop));
+                if (config.LowPowerLoop || loopB == null)
+                {
+                    activeLoop.Position = TimeSpan.Zero;
+                    activeLoop.Play();
+                    laps++;
+                }
+                else
+                {
+                    missedEnds++;
+                    if (missedEnds <= 20 || missedEnds % 100 == 0)
+                        Log.W("循环段到末尾未收到 MediaEnded，手动无缝接上（第 " + missedEnds + " 次）");
+                    SwapLoop(activeLoop, OtherLoop(activeLoop));
+                }
                 lastMoveMs = now;
                 lastPos = -1;
                 return;
@@ -1026,11 +1145,15 @@ namespace AntigravityBootOverlay
                 CloseSkipButton();
                 return;
             }
-            if (hasVideoLoop && loopA != null)
+            if (hasVideoLoop)
             {
-                loopA.Play();
-                activeLoop = loopA;
-                BeginSwap(introMedia, loopA);
+                EnsureLoopPlayersCreated();
+                if (loopA != null)
+                {
+                    loopA.Play();
+                    activeLoop = loopA;
+                    BeginSwap(introMedia, loopA);
+                }
             }
             if (phase == PlayPhase.Intro) Reveal(false);
             CloseSkipButton();
@@ -1051,6 +1174,43 @@ namespace AntigravityBootOverlay
         {
             if (pausedClockAt.HasValue) return elapsedBaseMs / 1000.0;
             return (clock.ElapsedMilliseconds + elapsedBaseMs) / 1000.0;
+        }
+
+        bool IsAnyPaused()
+        {
+            return hidden || sessionLocked || displayOff || batteryPaused || unfocusedPaused;
+        }
+
+        void UpdateTickInterval()
+        {
+            if (tick == null) return;
+            int targetMs = 16;
+            if (IsAnyPaused()) targetMs = 250;
+            else if (phase == PlayPhase.Revealed && !isMorphing && !isDragging) targetMs = 50;
+            if ((int)tick.Interval.TotalMilliseconds != targetMs)
+                tick.Interval = TimeSpan.FromMilliseconds(targetMs);
+        }
+
+        void UpdatePauseState()
+        {
+            string nextReason = "";
+            if (hidden) nextReason = "window-hidden";
+            else if (sessionLocked) nextReason = "session-locked";
+            else if (displayOff) nextReason = "display-off";
+            else if (batteryPaused) nextReason = "battery-saver";
+            else if (unfocusedPaused) nextReason = "unfocused";
+
+            bool shouldPause = !string.IsNullOrEmpty(nextReason);
+            bool wasPaused = !string.IsNullOrEmpty(pausedReason);
+            if (shouldPause != wasPaused || nextReason != pausedReason)
+            {
+                PauseOrResumePlayback(shouldPause, nextReason);
+                if (shouldPause != wasPaused)
+                {
+                    Log.W(shouldPause ? ("动态渲染已节能暂停：" + nextReason) : "动态渲染恢复播放");
+                    UpdateTickInterval();
+                }
+            }
         }
 
         void PauseOrResumePlayback(bool pause, string reason)
@@ -1076,7 +1236,12 @@ namespace AntigravityBootOverlay
                     clock.Start();
                 }
                 if (introMedia != null && !introGone) { try { introMedia.Play(); } catch { } }
-                if (activeLoop != null && introGone) { try { activeLoop.Play(); } catch { } }
+                if (activeLoop != null && introGone)
+                {
+                    try { activeLoop.Play(); } catch { }
+                    lastMoveMs = clock.ElapsedMilliseconds;
+                    lastPos = -1;
+                }
             }
         }
 
@@ -1096,6 +1261,7 @@ namespace AntigravityBootOverlay
             morphT0 = DateTime.UtcNow;
             morphDur = Math.Max(0.1, durationSec);
             UpdateDockDecorations();
+            UpdateTickInterval();
         }
 
         void TickMorph()
@@ -1126,6 +1292,7 @@ namespace AntigravityBootOverlay
                 ApplyOverlayPos(goal.Left, goal.Top, goal.Right - goal.Left, goal.Bottom - goal.Top);
                 UpdateCardClip(morphToCorner);
                 UpdateDockDecorations();
+                UpdateTickInterval();
             }
         }
 
@@ -1156,15 +1323,45 @@ namespace AntigravityBootOverlay
                 if (shouldPauseBattery != batteryPaused)
                 {
                     batteryPaused = shouldPauseBattery;
-                    if (!hidden)
+                    UpdatePauseState();
+                }
+            }
+
+            // 失焦后延时自动暂停（切到其他软件看网页/全屏时 0% 占用，切回 Antigravity 或悬停挂件立刻恢复）
+            if (phase == PlayPhase.Revealed && !hidden && !sessionLocked && !displayOff && !batteryPaused && !isMorphing && nowMs >= nextFocusCheckMs)
+            {
+                nextFocusCheckMs = nowMs + 400;
+                if (!config.PauseWhenUnfocused)
+                {
+                    unfocusedSince = null;
+                    if (unfocusedPaused) { unfocusedPaused = false; UpdatePauseState(); }
+                }
+                else
+                {
+                    IntPtr fg = Native.GetForegroundWindow();
+                    bool active = (fg == Target.Handle || fg == overlayH || mouseOverWidget);
+                    if (!active)
                     {
-                        PauseOrResumePlayback(batteryPaused, batteryPaused ? "battery-saver" : "");
-                        Log.W(batteryPaused ? "系统省电模式已开启，自动暂停动态背景解码" : "省电模式退出，恢复动态背景");
+                        if (!unfocusedSince.HasValue) unfocusedSince = DateTime.UtcNow;
+                        else if (!unfocusedPaused && (DateTime.UtcNow - unfocusedSince.Value).TotalSeconds >= config.UnfocusPauseDelaySeconds)
+                        {
+                            unfocusedPaused = true;
+                            UpdatePauseState();
+                        }
+                    }
+                    else
+                    {
+                        unfocusedSince = null;
+                        if (unfocusedPaused)
+                        {
+                            unfocusedPaused = false;
+                            UpdatePauseState();
+                        }
                     }
                 }
             }
 
-            if (hidden || batteryPaused) return;
+            if (IsAnyPaused()) return;
 
             if (Theme.Kind == "video")
             {
@@ -1278,7 +1475,7 @@ namespace AntigravityBootOverlay
                 {
                     hidden = true;
                     ShowAll(false);
-                    PauseOrResumePlayback(true, "window-hidden");
+                    UpdatePauseState();
                 }
                 return;
             }
@@ -1286,7 +1483,7 @@ namespace AntigravityBootOverlay
             {
                 hidden = false;
                 ShowAll(true);
-                if (!batteryPaused) PauseOrResumePlayback(false, "");
+                UpdatePauseState();
                 force = true;
             }
 
@@ -1449,17 +1646,26 @@ namespace AntigravityBootOverlay
             {
                 contentGrid.Background = Brushes.Transparent;
             }
-            else if (hasVideoLoop && loopA != null)
+            else if (hasVideoLoop)
             {
-                loopA.Play();
-                activeLoop = loopA;
-                if (introMedia != null)
+                EnsureLoopPlayersCreated();
+                if (loopA != null)
                 {
-                    var fade = new DoubleAnimation(0, TimeSpan.FromSeconds(0.8)) { EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } };
-                    var iv = introMedia;
-                    fade.Completed += delegate { iv.Visibility = Visibility.Collapsed; try { iv.Stop(); iv.Close(); } catch { } };
-                    introMedia.BeginAnimation(UIElement.OpacityProperty, fade);
-                    RampVolume(0, 0.8);
+                    loopA.Play();
+                    activeLoop = loopA;
+                    if (introMedia != null)
+                    {
+                        var fade = new DoubleAnimation(0, TimeSpan.FromSeconds(0.8)) { EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } };
+                        var iv = introMedia;
+                        fade.Completed += delegate
+                        {
+                            DisposePlayer(iv);
+                            if (introMedia == iv) introMedia = null;
+                            GC.Collect(1, GCCollectionMode.Optimized);
+                        };
+                        introMedia.BeginAnimation(UIElement.OpacityProperty, fade);
+                        RampVolume(0, 0.8);
+                    }
                 }
             }
             Reveal(true);
@@ -1468,6 +1674,7 @@ namespace AntigravityBootOverlay
         public void ApplyConfig(AppConfig cfg, bool fromSlider)
         {
             bool wasDocked = IsDockedNow();
+            bool oldLowPower = config != null ? config.LowPowerLoop : true;
             config = cfg;
             if (fromSlider) sliderBoostUntil = DateTime.UtcNow.AddSeconds(3.0);
             if (phase == PlayPhase.Ending || phase == PlayPhase.Done) return;
@@ -1500,6 +1707,15 @@ namespace AntigravityBootOverlay
                 {
                     SetAlpha(fromSlider ? (shouldDocked ? cfg.WidgetOpacity : cfg.ResidualAlpha) : ComputeTargetAmbientAlpha());
                 }
+                if (Theme.Kind == "video" && hasVideoLoop && introGone && !IsAnyPaused())
+                {
+                    string desiredPath = ResolveLoopVideoPath();
+                    if (cfg.LowPowerLoop != oldLowPower || (!string.IsNullOrEmpty(desiredPath) && !string.Equals(desiredPath, activeLoopPath, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        lastRecoverMs = -1;
+                        RebuildLoops("切换低功耗/画质模式");
+                    }
+                }
             }
             else if (phase == PlayPhase.Intro && shouldDocked != wasDocked)
             {
@@ -1513,11 +1729,9 @@ namespace AntigravityBootOverlay
                 volDur = -1;
                 introMedia.Volume = cfg.IntroVolume;
             }
-            if (!cfg.PauseOnBatterySaver && batteryPaused)
-            {
-                batteryPaused = false;
-                if (!hidden) PauseOrResumePlayback(false, "");
-            }
+            if (!cfg.PauseOnBatterySaver && batteryPaused) batteryPaused = false;
+            if (!cfg.PauseWhenUnfocused && unfocusedPaused) { unfocusedPaused = false; unfocusedSince = null; }
+            UpdatePauseState();
         }
 
         public void Finish(bool fast)
@@ -1566,14 +1780,30 @@ namespace AntigravityBootOverlay
             try
             {
                 long ev = wParam.ToInt64();
-                if (ev == 0x7 || ev == 0x12) LaterRebuild("系统唤醒", 2000);
+                if (ev == 0x7 || ev == 0x12)
+                {
+                    if (!IsAnyPaused() && Theme.Kind == "video" && phase == PlayPhase.Revealed && introGone)
+                        LaterRebuild("系统唤醒", 2000);
+                }
                 else if (ev == 0x8013 && lParam != IntPtr.Zero)
                 {
                     var g = (Guid)Marshal.PtrToStructure(lParam, typeof(Guid));
                     if (g == Native.GUID_CONSOLE_DISPLAY_STATE)
                     {
                         int state = Marshal.ReadInt32(lParam, 20);
-                        if (state == 1 && displayState >= 0 && displayState != 1) LaterRebuild("显示器点亮", 1500);
+                        if (state == 0)
+                        {
+                            displayOff = true;
+                            UpdatePauseState();
+                        }
+                        else if (state == 1)
+                        {
+                            bool wasOff = displayOff || (displayState >= 0 && displayState != 1);
+                            displayOff = false;
+                            UpdatePauseState();
+                            if (wasOff && !IsAnyPaused() && Theme.Kind == "video" && phase == PlayPhase.Revealed && introGone)
+                                LaterRebuild("显示器点亮", 1500);
+                        }
                         displayState = state;
                     }
                 }
@@ -1597,8 +1827,16 @@ namespace AntigravityBootOverlay
             snap.Recoveries = recoveries;
             snap.EffectiveAlpha = Math.Round(alpha, 3);
             snap.PausedReason = pausedReason ?? "";
-            try { using (var pr = Process.GetCurrentProcess()) snap.MemoryMb = pr.WorkingSet64 / (1024 * 1024); }
-            catch { snap.MemoryMb = 0; }
+            snap.UsingLightCache = usingLightCache;
+            try
+            {
+                using (var pr = Process.GetCurrentProcess())
+                {
+                    snap.MemoryMb = pr.WorkingSet64 / (1024 * 1024);
+                    snap.ThreadCount = pr.Threads.Count;
+                }
+            }
+            catch { snap.MemoryMb = 0; snap.ThreadCount = 0; }
             return snap;
         }
     }

@@ -47,6 +47,8 @@
     const p = stage?.phase || 'idle';
     if (stage?.pausedReason === 'battery-saver') return ['warn', '省电暂停'];
     if (stage?.pausedReason === 'window-hidden') return ['warn', '窗口隐藏休眠'];
+    if (stage?.pausedReason === 'session-locked' || stage?.pausedReason === 'display-off') return ['warn', '锁屏/息屏休眠'];
+    if (stage?.pausedReason === 'unfocused') return ['warn', '切出休眠 (0% 占用)'];
     if (p === 'intro') return ['live', '播放开屏中'];
     if (p === 'revealed') {
       const m = stage?.displayMode || state?.config?.displayMode || 'widget';
@@ -569,10 +571,27 @@
         <div class="card-title">节能与启动模式</div>
         <div class="switch-row">
           <div class="switch-info">
+            <div class="switch-label">切到其他软件自动暂停解码</div>
+            <div class="switch-hint">离开 Antigravity ${Number(cfg.unfocusPauseDelaySeconds ?? 3)} 秒后暂停渲染，切回或悬停挂件立刻恢复</div>
+          </div>
+          <input type="checkbox" class="toggle" id="chk-unfocus" ${cfg.pauseWhenUnfocused !== false ? 'checked' : ''} />
+        </div>
+        <div class="switch-row">
+          <div class="switch-info">
+            <div class="switch-label">极轻量单管线与 640×360 挂件缓存</div>
+            <div class="switch-hint">小窗自动改用低码率 H.264 缓存与单管线循环，大幅压低 CPU 与内存</div>
+          </div>
+          <input type="checkbox" class="toggle" id="chk-lowpower" ${cfg.lowPowerLoop !== false ? 'checked' : ''} />
+        </div>
+        <div class="switch-row">
+          <div class="switch-info">
             <div class="switch-label">Windows 省电模式自动暂停解码</div>
-            <div class="switch-hint">窗口最小化或被遮挡时同样自动零占用休眠</div>
+            <div class="switch-hint">窗口最小化、锁屏或息屏时同样自动零占用休眠</div>
           </div>
           <input type="checkbox" class="toggle" id="chk-battery" ${cfg.pauseOnBatterySaver ? 'checked' : ''} />
+        </div>
+        <div style="margin-top:10px;">
+          <button type="button" class="btn btn-sm" id="btn-optimize-cache" style="width:100%;">⚡ 为当前主题生成 640×360 轻量挂件缓存</button>
         </div>
         <div class="switch-row">
           <div class="switch-info">
@@ -614,7 +633,19 @@
       valIdle.textContent = `${Number(rngIdle.value).toFixed(1)} 秒`;
       pushConfigPatch({ focusIdleSeconds: Number(rngIdle.value) });
     };
+    el.querySelector('#chk-unfocus').onchange = (e) => pushConfigPatch({ pauseWhenUnfocused: e.target.checked }, true);
+    el.querySelector('#chk-lowpower').onchange = (e) => pushConfigPatch({ lowPowerLoop: e.target.checked }, true);
     el.querySelector('#chk-battery').onchange = (e) => pushConfigPatch({ pauseOnBatterySaver: e.target.checked }, true);
+    el.querySelector('#btn-optimize-cache').onclick = async () => {
+      try {
+        showToast('正在用 Windows 原生转码器生成 640×360 轻量缓存…');
+        const res = await api('/api/themes/optimize', 'POST', { themeId: state.config.activeThemeId });
+        if (res.bootstrap) state = res.bootstrap;
+        renderAll();
+        if (res.skipped) showToast(res.reason || '当前主题无需转码缓存');
+        else showToast(`轻量缓存已就绪（${(res.outputBytes / 1048576).toFixed(2)} MB）`);
+      } catch (err) { showToast(err.message); }
+    };
     el.querySelector('#chk-tray').onchange = (e) => pushConfigPatch({ showTrayIcon: e.target.checked }, true);
     el.querySelector('#chk-autostart').onchange = async (e) => {
       try {
@@ -650,12 +681,12 @@
           <div class="metric-v">${eng.port ? `127.0.0.1:${eng.port}` : '—'}</div>
         </div>
         <div class="metric-box">
-          <div class="metric-k">循环圈数 / 自愈</div>
-          <div class="metric-v">${st.laps ?? 0} 圈 / ${st.recoveries ?? 0} 次</div>
+          <div class="metric-k">循环圈数 / 管线画质</div>
+          <div class="metric-v">${st.laps ?? 0} 圈 / ${st.usingLightCache ? '640×360 轻量' : '原片'}</div>
         </div>
         <div class="metric-box">
-          <div class="metric-k">内存 / 当前不透明度</div>
-          <div class="metric-v">${st.memoryMb ?? 0} MB / ${Math.round((st.effectiveAlpha || 0) * 100)}%</div>
+          <div class="metric-k">内存 / 线程数 / 透明度</div>
+          <div class="metric-v">${st.memoryMb ?? 0} MB / ${st.threadCount ?? 0} 线程 / ${Math.round((st.effectiveAlpha || 0) * 100)}%</div>
         </div>
       </div>
 

@@ -9,6 +9,7 @@ import {
   createCustomTheme,
   deleteTheme,
   downloadOfficialPack,
+  ensureWidgetLightCache,
   getAutostartStatus,
   isOverlayAlive,
   isPackInstalled,
@@ -416,6 +417,14 @@ app.api('/api/themes/custom', async (data) => {
     await callOverlay(DATA_DIR, 'POST', '/reload', {});
   }
   return { ok: true, theme, bootstrap: await buildBootstrapPayload() };
+});
+
+app.api('/api/themes/optimize', async (data) => {
+  const cfg = loadConfig(DATA_DIR);
+  const id = String(data.themeId || cfg.activeThemeId);
+  const result = ensureWidgetLightCache(DATA_DIR, id);
+  await callOverlay(DATA_DIR, 'POST', '/reload', {});
+  return { ...result, bootstrap: await buildBootstrapPayload() };
 });
 
 app.api('/api/themes', async (data) => {
