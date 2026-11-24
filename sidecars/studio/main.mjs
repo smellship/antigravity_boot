@@ -318,7 +318,7 @@ app.api('/api/preview', (data) => {
     const mime = ext === '.png' ? 'image/png' : (ext === '.webp' ? 'image/webp' : 'image/jpeg');
     return new ResponseClass(readFileSync(candidate), {
       contentType: mime,
-      headers: { 'Cache-Control': 'public, max-age=3600' },
+      headers: NO_CACHE,
     });
   }
   const pack = OFFICIAL_PACKS.find((p) => p.id === id);
@@ -377,6 +377,34 @@ app.api('/api/themes/select', async (data) => {
     await callOverlay(DATA_DIR, 'POST', '/play', { mode: data.playMode, themeId: id });
   }
   return { ok: true, config: updated, bootstrap: await buildBootstrapPayload() };
+});
+
+app.api('/api/themes/next', async () => {
+  const live = await callOverlay(DATA_DIR, 'POST', '/next-theme', {});
+  if (!live) {
+    const cfg = loadConfig(DATA_DIR);
+    const themes = loadThemes(DATA_DIR);
+    const idx = themes.findIndex((t) => t.id === cfg.activeThemeId);
+    const next = themes[(idx + 1) % themes.length];
+    patchConfig(DATA_DIR, { activeThemeId: next.id });
+  }
+  return { ok: true, bootstrap: await buildBootstrapPayload() };
+});
+
+app.api('/api/widget/reset', async () => {
+  const live = await callOverlay(DATA_DIR, 'POST', '/reset-widget', {});
+  if (!live) {
+    patchConfig(DATA_DIR, {
+      displayMode: 'widget',
+      widgetAnchor: 'bottom-left',
+      widgetOffsetX: 12,
+      widgetOffsetY: 52,
+      widgetWidth: 234,
+      widgetHeight: 132,
+      widgetCornerRadius: 12,
+    });
+  }
+  return { ok: true, bootstrap: await buildBootstrapPayload() };
 });
 
 app.api('/api/themes/custom', async (data) => {

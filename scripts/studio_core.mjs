@@ -29,6 +29,15 @@ export const DEFAULT_CONFIG = {
   showTrayIcon: false,
   targetProcesses: ['Antigravity'],
   lockedWindowHwnd: 0,
+  displayMode: 'widget',
+  widgetAnchor: 'bottom-left',
+  widgetOffsetX: 12,
+  widgetOffsetY: 52,
+  widgetWidth: 234,
+  widgetHeight: 132,
+  widgetCornerRadius: 12,
+  widgetOpacity: 0.94,
+  widgetClickThrough: false,
 };
 
 export const BUILTIN_THEMES = [
@@ -195,6 +204,15 @@ export function clampConfig(raw) {
     ? cfg.targetProcesses.map((x) => String(x).trim()).filter(Boolean)
     : ['Antigravity'];
   cfg.lockedWindowHwnd = Number(cfg.lockedWindowHwnd || 0);
+  cfg.displayMode = ['widget', 'widget-always', 'fullscreen'].includes(cfg.displayMode) ? cfg.displayMode : 'widget';
+  cfg.widgetAnchor = ['bottom-left', 'bottom-right', 'top-left', 'top-right'].includes(cfg.widgetAnchor) ? cfg.widgetAnchor : 'bottom-left';
+  cfg.widgetOffsetX = Math.max(0, Math.min(1600, Number(cfg.widgetOffsetX ?? 12)));
+  cfg.widgetOffsetY = Math.max(0, Math.min(1200, Number(cfg.widgetOffsetY ?? 52)));
+  cfg.widgetWidth = Math.max(140, Math.min(720, Number(cfg.widgetWidth ?? 234)));
+  cfg.widgetHeight = Math.max(80, Math.min(480, Number(cfg.widgetHeight ?? 132)));
+  cfg.widgetCornerRadius = Math.max(0, Math.min(32, Number(cfg.widgetCornerRadius ?? 12)));
+  cfg.widgetOpacity = Math.max(0.2, Math.min(1, Number(cfg.widgetOpacity ?? 0.94)));
+  cfg.widgetClickThrough = Boolean(cfg.widgetClickThrough);
   return cfg;
 }
 

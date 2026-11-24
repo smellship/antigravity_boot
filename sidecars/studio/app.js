@@ -48,7 +48,10 @@
     if (stage?.pausedReason === 'battery-saver') return ['warn', '省电暂停'];
     if (stage?.pausedReason === 'window-hidden') return ['warn', '窗口隐藏休眠'];
     if (p === 'intro') return ['live', '播放开屏中'];
-    if (p === 'revealed') return ['live', '动态背景中'];
+    if (p === 'revealed') {
+      const m = stage?.displayMode || state?.config?.displayMode || 'widget';
+      return ['live', m === 'fullscreen' ? '全屏背景中' : '动态挂件中'];
+    }
     if (p === 'ending') return ['warn', '淡出中'];
     return ['', '待命'];
   }
@@ -97,10 +100,12 @@
     const cfg = state.config;
     const st = state.stage || {};
     const isPlaying = st.active && st.phase !== 'done';
+    const isWidget = cfg.displayMode !== 'fullscreen';
+    const heroVer = encodeURIComponent(th?.previewPath || th?.imagePath ? 'img' : 'svg');
 
     el.innerHTML = `
       <div class="hero">
-        <img class="hero-img" src="/api/preview?themeId=${encodeURIComponent(th?.id || 'stellar-aurora')}" alt="${esc(th?.name)}" />
+        <img class="hero-img" src="/api/preview?themeId=${encodeURIComponent(th?.id || 'stellar-aurora')}&v=${heroVer}" alt="${esc(th?.name)}" />
         <div class="hero-overlay">
           <div class="hero-name">${esc(th?.name || '星穹极光')}</div>
           <div class="hero-desc">${esc(th?.description || '')}</div>
@@ -109,20 +114,37 @@
 
       <div class="transport">
         <button type="button" class="btn btn-primary" id="btn-play-intro">▶ 播放一次开屏</button>
-        <button type="button" class="btn" id="btn-play-loop">♾ 开启循环背景</button>
+        <button type="button" class="btn" id="btn-play-loop">♾ 开启${isWidget ? '挂件' : '循环'}背景</button>
         <button type="button" class="btn" id="btn-skip" ${st.phase === 'intro' ? '' : 'disabled'}>⏭ 跳过开屏</button>
         <button type="button" class="btn btn-danger" id="btn-stop" ${isPlaying ? '' : 'disabled'}>✕ 淡出关闭</button>
       </div>
 
       <div class="card">
-        <div class="card-title">实时调音台</div>
-        <div class="slider-row">
-          <div class="slider-head">
-            <span>循环背景不透明度</span>
-            <span class="slider-val" id="val-alpha">${Math.round(cfg.residualAlpha * 100)}%</span>
-          </div>
-          <input type="range" id="rng-alpha" min="0" max="80" step="1" value="${Math.round(cfg.residualAlpha * 100)}" />
+        <div class="card-title">展示形态与调音台</div>
+        <div class="seg full" id="seg-display-mode">
+          <button type="button" data-val="widget" class="${cfg.displayMode === 'widget' ? 'active' : ''}">左下角挂件</button>
+          <button type="button" data-val="widget-always" class="${cfg.displayMode === 'widget-always' ? 'active' : ''}">全程小窗</button>
+          <button type="button" data-val="fullscreen" class="${cfg.displayMode === 'fullscreen' ? 'active' : ''}">全屏背景</button>
         </div>
+
+        ${isWidget ? `
+          <div class="slider-row">
+            <div class="slider-head">
+              <span>挂件清晰度</span>
+              <span class="slider-val" id="val-walpha">${Math.round((cfg.widgetOpacity ?? 0.94) * 100)}%</span>
+            </div>
+            <input type="range" id="rng-walpha" min="20" max="100" step="1" value="${Math.round((cfg.widgetOpacity ?? 0.94) * 100)}" />
+          </div>
+        ` : `
+          <div class="slider-row">
+            <div class="slider-head">
+              <span>全屏背景不透明度</span>
+              <span class="slider-val" id="val-alpha">${Math.round(cfg.residualAlpha * 100)}%</span>
+            </div>
+            <input type="range" id="rng-alpha" min="0" max="80" step="1" value="${Math.round(cfg.residualAlpha * 100)}" />
+          </div>
+        `}
+
         <div class="slider-row">
           <div class="slider-head">
             <span>开屏音效与配音音量</span>
@@ -133,7 +155,7 @@
         <div class="switch-row" style="margin-top:8px;">
           <div class="switch-info">
             <div class="switch-label">画面填充方式</div>
-            <div class="switch-hint">超宽屏建议尝试完整居中，避免上下裁剪</div>
+            <div class="switch-hint">铺满裁切更沉浸，完整居中不裁剪边缘</div>
           </div>
           <div class="seg" id="seg-stretch">
             <button type="button" data-val="UniformToFill" class="${cfg.stretchMode !== 'Uniform' ? 'active' : ''}">铺满裁切</button>
@@ -141,6 +163,56 @@
           </div>
         </div>
       </div>
+
+      ${isWidget ? `
+        <div class="card">
+          <div class="card-title">
+            <span>挂件布局（可直接拖拽移动 / 右下角缩放）</span>
+          </div>
+          <div class="field">
+            <label>贴靠角落（随 Antigravity 窗口变化自动吸附，更新软件不失效）</label>
+            <select id="sel-wanchor">
+              <option value="bottom-left" ${cfg.widgetAnchor === 'bottom-left' ? 'selected' : ''}>左下角 · Settings 上方</option>
+              <option value="bottom-right" ${cfg.widgetAnchor === 'bottom-right' ? 'selected' : ''}>右下角</option>
+              <option value="top-left" ${cfg.widgetAnchor === 'top-left' ? 'selected' : ''}>左上角</option>
+              <option value="top-right" ${cfg.widgetAnchor === 'top-right' ? 'selected' : ''}>右上角</option>
+            </select>
+          </div>
+          <div class="grid-2">
+            <div class="slider-row">
+              <div class="slider-head">
+                <span>宽度</span>
+                <span class="slider-val" id="val-ww">${Math.round(cfg.widgetWidth ?? 234)}px</span>
+              </div>
+              <input type="range" id="rng-ww" min="140" max="640" step="2" value="${Math.round(cfg.widgetWidth ?? 234)}" />
+            </div>
+            <div class="slider-row">
+              <div class="slider-head">
+                <span>高度</span>
+                <span class="slider-val" id="val-wh">${Math.round(cfg.widgetHeight ?? 132)}px</span>
+              </div>
+              <input type="range" id="rng-wh" min="80" max="420" step="2" value="${Math.round(cfg.widgetHeight ?? 132)}" />
+            </div>
+          </div>
+          <div class="slider-row" style="margin-top:8px;">
+            <div class="slider-head">
+              <span>卡片圆角</span>
+              <span class="slider-val" id="val-wr">${Math.round(cfg.widgetCornerRadius ?? 12)}px</span>
+            </div>
+            <input type="range" id="rng-wr" min="0" max="28" step="1" value="${Math.round(cfg.widgetCornerRadius ?? 12)}" />
+          </div>
+          <div class="switch-row" style="margin-top:6px;">
+            <div class="switch-info">
+              <div class="switch-label">挂件点击穿透</div>
+              <div class="switch-hint">关闭时鼠标悬停可快速重播/切主题/拖动调整位置</div>
+            </div>
+            <input type="checkbox" class="toggle" id="chk-wct" ${cfg.widgetClickThrough ? 'checked' : ''} />
+          </div>
+          <div style="margin-top:10px;">
+            <button type="button" class="btn btn-sm" id="btn-reset-widget" style="width:100%;">📍 归位到左下角默认位 (234×132)</button>
+          </div>
+        </div>
+      ` : ''}
 
       <div class="card">
         <div class="card-title">打开 Antigravity 时</div>
@@ -153,8 +225,8 @@
         </div>
         <div class="switch-row">
           <div class="switch-info">
-            <div class="switch-label">保留半透明动态背景</div>
-            <div class="switch-hint">透出代码界面后继续点击穿透循环播放</div>
+            <div class="switch-label">保留动态循环背景 / 挂件</div>
+            <div class="switch-hint">开屏结束后留在角落或全屏继续循环播放</div>
           </div>
           <input type="checkbox" class="toggle" id="chk-loop" ${cfg.loopBackground ? 'checked' : ''} />
         </div>
@@ -178,7 +250,7 @@
     el.querySelector('#btn-play-loop').onclick = async () => {
       try {
         await api('/api/play', 'POST', { mode: 'loop' });
-        showToast('已开启半透明循环背景');
+        showToast(isWidget ? '已在角落开启动态挂件' : '已开启半透明循环背景');
         setTimeout(refreshStatus, 250);
       } catch (e) { showToast(e.message); }
     };
@@ -191,12 +263,30 @@
       catch (e) { showToast(e.message); }
     };
 
+    el.querySelectorAll('#seg-display-mode button').forEach((b) => {
+      b.onclick = () => {
+        pushConfigPatch({ displayMode: b.dataset.val }, true);
+        renderStage();
+      };
+    });
+
     const rngAlpha = el.querySelector('#rng-alpha');
-    const valAlpha = el.querySelector('#val-alpha');
-    rngAlpha.oninput = () => {
-      valAlpha.textContent = `${rngAlpha.value}%`;
-      pushConfigPatch({ residualAlpha: Number(rngAlpha.value) / 100 });
-    };
+    if (rngAlpha) {
+      const valAlpha = el.querySelector('#val-alpha');
+      rngAlpha.oninput = () => {
+        valAlpha.textContent = `${rngAlpha.value}%`;
+        pushConfigPatch({ residualAlpha: Number(rngAlpha.value) / 100 });
+      };
+    }
+
+    const rngWAlpha = el.querySelector('#rng-walpha');
+    if (rngWAlpha) {
+      const valWAlpha = el.querySelector('#val-walpha');
+      rngWAlpha.oninput = () => {
+        valWAlpha.textContent = `${rngWAlpha.value}%`;
+        pushConfigPatch({ widgetOpacity: Number(rngWAlpha.value) / 100 });
+      };
+    }
 
     const rngVol = el.querySelector('#rng-vol');
     const valVol = el.querySelector('#val-vol');
@@ -213,6 +303,37 @@
       };
     });
 
+    if (isWidget) {
+      el.querySelector('#sel-wanchor').onchange = (e) => pushConfigPatch({ widgetAnchor: e.target.value }, true);
+      const rngWw = el.querySelector('#rng-ww');
+      const valWw = el.querySelector('#val-ww');
+      rngWw.oninput = () => {
+        valWw.textContent = `${rngWw.value}px`;
+        pushConfigPatch({ widgetWidth: Number(rngWw.value) });
+      };
+      const rngWh = el.querySelector('#rng-wh');
+      const valWh = el.querySelector('#val-wh');
+      rngWh.oninput = () => {
+        valWh.textContent = `${rngWh.value}px`;
+        pushConfigPatch({ widgetHeight: Number(rngWh.value) });
+      };
+      const rngWr = el.querySelector('#rng-wr');
+      const valWr = el.querySelector('#val-wr');
+      rngWr.oninput = () => {
+        valWr.textContent = `${rngWr.value}px`;
+        pushConfigPatch({ widgetCornerRadius: Number(rngWr.value) });
+      };
+      el.querySelector('#chk-wct').onchange = (e) => pushConfigPatch({ widgetClickThrough: e.target.checked }, true);
+      el.querySelector('#btn-reset-widget').onclick = async () => {
+        try {
+          const r = await api('/api/widget/reset', 'POST', {});
+          state = r.bootstrap;
+          renderAll();
+          showToast('已归位到左下角 (Settings 上方)');
+        } catch (e) { showToast(e.message); }
+      };
+    }
+
     el.querySelector('#chk-intro').onchange = (e) => pushConfigPatch({ playIntro: e.target.checked }, true);
     el.querySelector('#chk-loop').onchange = (e) => pushConfigPatch({ loopBackground: e.target.checked }, true);
     el.querySelector('#chk-shuffle').onchange = (e) => pushConfigPatch({ shuffleOnBoot: e.target.checked }, true);
@@ -225,9 +346,10 @@
     const myCards = state.themes.map((t) => {
       const isActive = t.id === activeId;
       const kindLabel = t.kind === 'procedural' ? '内置矢量' : (t.kind === 'image' ? '本地壁纸' : '视频动画');
+      const vTag = encodeURIComponent(t?.previewPath || t?.imagePath ? 'img' : 'svg');
       return `
         <div class="theme-item ${isActive ? 'active' : ''}">
-          <img class="theme-thumb" src="/api/preview?themeId=${encodeURIComponent(t.id)}" alt="${esc(t.name)}" />
+          <img class="theme-thumb" src="/api/preview?themeId=${encodeURIComponent(t.id)}&v=${vTag}" alt="${esc(t.name)}" />
           <div class="theme-meta">
             <div class="theme-name-row">
               <span class="theme-name">${esc(t.name)}</span>
@@ -249,9 +371,10 @@
       const pr = p.progress;
       const downloading = pr && pr.status === 'downloading';
       const hasErr = pr && pr.status === 'error';
+      const pTag = p.installed ? 'img' : 'svg';
       return `
         <div class="theme-item">
-          <img class="theme-thumb" src="/api/preview?themeId=${encodeURIComponent(p.id)}" alt="${esc(p.name)}" />
+          <img class="theme-thumb" src="/api/preview?themeId=${encodeURIComponent(p.id)}&v=${pTag}" alt="${esc(p.name)}" />
           <div class="theme-meta">
             <div class="theme-name-row">
               <span class="theme-name">${esc(p.name)}</span>

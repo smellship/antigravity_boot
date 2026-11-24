@@ -419,6 +419,23 @@ input[type="range"] {
   color: var(--abs-text);
 }
 
+.seg.full {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.seg.full button {
+  padding: 6px 6px;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
 .theme-list {
   display: flex;
   flex-direction: column;

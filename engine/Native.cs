@@ -90,6 +90,12 @@ namespace AntigravityBootOverlay
         [DllImport("user32.dll")]
         public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
 
+        [DllImport("user32.dll")]
+        public static extern bool GetCursorPos(out POINT lpPoint);
+
+        [DllImport("user32.dll")]
+        static extern uint GetDpiForWindow(IntPtr hwnd);
+
         [DllImport("kernel32.dll")]
         public static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS sps);
 
@@ -202,6 +208,20 @@ namespace AntigravityBootOverlay
             if (!GetSystemPowerStatus(out sps)) return false;
             onBattery = (sps.ACLineStatus == 0);
             return sps.SystemStatusFlag == 1;
+        }
+
+        public static double GetWindowDpiScale(IntPtr hwnd)
+        {
+            try
+            {
+                if (hwnd != IntPtr.Zero)
+                {
+                    uint dpi = GetDpiForWindow(hwnd);
+                    if (dpi >= 72 && dpi <= 480) return dpi / 96.0;
+                }
+            }
+            catch { }
+            return 1.0;
         }
     }
 }

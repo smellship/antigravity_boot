@@ -170,8 +170,63 @@ namespace AntigravityBootOverlay
                 if (stage == created) stage = null;
                 RefreshTrayMenu();
             });
+            created.OnReplayRequested = delegate { HandlePlay(true, Config.ActiveThemeId, target.Hwnd); };
+            created.OnNextThemeRequested = delegate { CycleNextTheme(); };
+            created.OnToggleModeRequested = delegate { ToggleDisplayMode(); };
+            created.OnGeometryCommitted = delegate(AppConfig updated) { ConfigStore.SaveConfig(updated); };
             stage = created;
             RefreshTrayMenu();
+        }
+
+        public Dictionary<string, object> CycleNextTheme()
+        {
+            Themes = ConfigStore.LoadThemes();
+            var playable = new List<ThemeDefinition>();
+            for (int i = 0; i < Themes.Count; i++)
+            {
+                if (ConfigStore.IsThemePlayable(Themes[i])) playable.Add(Themes[i]);
+            }
+            if (playable.Count == 0) playable.Add(ThemeDefinition.BuiltinStellarAurora());
+
+            int curIdx = -1;
+            for (int i = 0; i < playable.Count; i++)
+            {
+                if (string.Equals(playable[i].Id, Config.ActiveThemeId, StringComparison.OrdinalIgnoreCase)) { curIdx = i; break; }
+            }
+            var next = playable[(curIdx + 1) % playable.Count];
+            Config.ActiveThemeId = next.Id;
+            ConfigStore.SaveConfig(Config);
+
+            var win = stage != null ? stage.Target : WindowFinder.FindBest(Config, testTitle);
+            if (win != null && win.Valid)
+            {
+                bool introOnlyVideo = next.Kind == "video" && (string.IsNullOrEmpty(next.LoopPath) || !File.Exists(next.LoopPath));
+                StartStage(win, next, introOnlyVideo);
+            }
+            return GetStatusMap();
+        }
+
+        public void ToggleDisplayMode()
+        {
+            Config.DisplayMode = (Config.DisplayMode == "fullscreen") ? "widget" : "fullscreen";
+            Config.Clamp();
+            ConfigStore.SaveConfig(Config);
+            if (stage != null) stage.ApplyConfig(Config, true);
+        }
+
+        public Dictionary<string, object> ResetWidgetLayout()
+        {
+            Config.DisplayMode = "widget";
+            Config.WidgetAnchor = "bottom-left";
+            Config.WidgetOffsetX = 12;
+            Config.WidgetOffsetY = 52;
+            Config.WidgetWidth = 234;
+            Config.WidgetHeight = 132;
+            Config.WidgetCornerRadius = 12;
+            Config.Clamp();
+            ConfigStore.SaveConfig(Config);
+            if (stage != null) stage.ApplyConfig(Config, true);
+            return GetStatusMap();
         }
 
         public Dictionary<string, object> HandlePlay(bool withIntro, string themeId, long explicitHwnd)
@@ -253,13 +308,23 @@ namespace AntigravityBootOverlay
             if (patch.TryGetValue("showTrayIcon", out v) && v is bool) Config.ShowTrayIcon = (bool)v;
             if (patch.TryGetValue("lockedWindowHwnd", out v) && v != null) Config.LockedWindowHwnd = Convert.ToInt64(v, CultureInfo.InvariantCulture);
 
+            if (patch.TryGetValue("displayMode", out v) && v != null) Config.DisplayMode = Convert.ToString(v, CultureInfo.InvariantCulture);
+            if (patch.TryGetValue("widgetAnchor", out v) && v != null) Config.WidgetAnchor = Convert.ToString(v, CultureInfo.InvariantCulture);
+            if (patch.TryGetValue("widgetOffsetX", out v) && v != null) Config.WidgetOffsetX = Convert.ToDouble(v, CultureInfo.InvariantCulture);
+            if (patch.TryGetValue("widgetOffsetY", out v) && v != null) Config.WidgetOffsetY = Convert.ToDouble(v, CultureInfo.InvariantCulture);
+            if (patch.TryGetValue("widgetWidth", out v) && v != null) Config.WidgetWidth = Convert.ToDouble(v, CultureInfo.InvariantCulture);
+            if (patch.TryGetValue("widgetHeight", out v) && v != null) Config.WidgetHeight = Convert.ToDouble(v, CultureInfo.InvariantCulture);
+            if (patch.TryGetValue("widgetCornerRadius", out v) && v != null) Config.WidgetCornerRadius = Convert.ToDouble(v, CultureInfo.InvariantCulture);
+            if (patch.TryGetValue("widgetOpacity", out v) && v != null) Config.WidgetOpacity = Convert.ToDouble(v, CultureInfo.InvariantCulture);
+            if (patch.TryGetValue("widgetClickThrough", out v) && v is bool) Config.WidgetClickThrough = (bool)v;
+
             Config.Clamp();
             ConfigStore.SaveConfig(Config);
             Themes = ConfigStore.LoadThemes();
 
             if (stage != null)
             {
-                bool sliderTouch = patch.ContainsKey("residualAlpha") || patch.ContainsKey("introVolume");
+                bool sliderTouch = patch.ContainsKey("residualAlpha") || patch.ContainsKey("introVolume") || patch.ContainsKey("widgetOpacity");
                 stage.ApplyConfig(Config, sliderTouch);
                 if (!string.Equals(oldThemeId, Config.ActiveThemeId, StringComparison.OrdinalIgnoreCase))
                 {
@@ -298,6 +363,7 @@ namespace AntigravityBootOverlay
                 var sd = new Dictionary<string, object>();
                 sd["active"] = true;
                 sd["phase"] = snap.Phase;
+                sd["displayMode"] = snap.DisplayMode;
                 sd["themeId"] = snap.ThemeId;
                 sd["themeName"] = snap.ThemeName;
                 sd["kind"] = snap.Kind;
@@ -316,6 +382,7 @@ namespace AntigravityBootOverlay
                 var sd = new Dictionary<string, object>();
                 sd["active"] = false;
                 sd["phase"] = "idle";
+                sd["displayMode"] = Config.DisplayMode;
                 sd["themeId"] = activeTheme.Id;
                 sd["themeName"] = activeTheme.Name;
                 sd["kind"] = activeTheme.Kind;
@@ -475,15 +542,20 @@ namespace AntigravityBootOverlay
                 }
 
                 bool ipcOk = healthJson.Contains("\"ok\":true") && statusJson.Contains("stellar-aurora");
-                bool allOk = pngOk && ipcOk && th2.Count >= 1 && cfg2 != null;
+                var simWin = new Native.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 };
+                var wRect = OverlayStage.ComputeWidgetRect(simWin, cfg2, 1.0);
+                bool widgetOk = wRect.Left == 12 && (wRect.Right - wRect.Left) == 234 && (wRect.Bottom - wRect.Top) == 132 && wRect.Bottom == 1028;
+                bool allOk = pngOk && ipcOk && widgetOk && th2.Count >= 1 && cfg2 != null;
 
                 report["ok"] = allOk;
                 report["pngBytes"] = fi.Exists ? fi.Length : 0;
                 report["ipcOk"] = ipcOk;
+                report["widgetOk"] = widgetOk;
+                report["widgetRect"] = wRect.Left + "," + wRect.Top + "," + wRect.Right + "," + wRect.Bottom;
                 report["themeCount"] = th2.Count;
                 report["message"] = allOk ? "SELF_TEST_OK" : "SELF_TEST_FAILED";
 
-                Log.W("SELF_TEST_OK pngBytes=" + (fi.Exists ? fi.Length : 0) + " themes=" + th2.Count);
+                Log.W("SELF_TEST_OK pngBytes=" + (fi.Exists ? fi.Length : 0) + " widgetOk=" + widgetOk + " themes=" + th2.Count);
                 exitCode = allOk ? 0 : 1;
             }
             catch (Exception ex)

@@ -213,6 +213,17 @@ namespace AntigravityBootOverlay
         public List<string> TargetProcesses;
         public long LockedWindowHwnd;
 
+        // 动态挂件布局配置
+        public string DisplayMode;       // widget | widget-always | fullscreen
+        public string WidgetAnchor;      // bottom-left | bottom-right | top-left | top-right
+        public double WidgetOffsetX;
+        public double WidgetOffsetY;
+        public double WidgetWidth;
+        public double WidgetHeight;
+        public double WidgetCornerRadius;
+        public double WidgetOpacity;
+        public bool WidgetClickThrough;
+
         public AppConfig()
         {
             ActiveThemeId = "stellar-aurora";
@@ -229,6 +240,16 @@ namespace AntigravityBootOverlay
             ShowTrayIcon = false;
             TargetProcesses = new List<string> { "Antigravity" };
             LockedWindowHwnd = 0;
+
+            DisplayMode = "widget";
+            WidgetAnchor = "bottom-left";
+            WidgetOffsetX = 12;
+            WidgetOffsetY = 52;
+            WidgetWidth = 234;
+            WidgetHeight = 132;
+            WidgetCornerRadius = 12;
+            WidgetOpacity = 0.94;
+            WidgetClickThrough = false;
         }
 
         public void Clamp()
@@ -241,6 +262,17 @@ namespace AntigravityBootOverlay
             FocusIdleSeconds = Math.Max(1.0, Math.Min(30.0, FocusIdleSeconds));
             if (TargetProcesses == null || TargetProcesses.Count == 0)
                 TargetProcesses = new List<string> { "Antigravity" };
+
+            if (DisplayMode != "widget" && DisplayMode != "widget-always" && DisplayMode != "fullscreen")
+                DisplayMode = "widget";
+            if (WidgetAnchor != "bottom-left" && WidgetAnchor != "bottom-right" && WidgetAnchor != "top-left" && WidgetAnchor != "top-right")
+                WidgetAnchor = "bottom-left";
+            WidgetOffsetX = Math.Max(0.0, Math.Min(1600.0, WidgetOffsetX));
+            WidgetOffsetY = Math.Max(0.0, Math.Min(1200.0, WidgetOffsetY));
+            WidgetWidth = Math.Max(140.0, Math.Min(720.0, WidgetWidth));
+            WidgetHeight = Math.Max(80.0, Math.Min(480.0, WidgetHeight));
+            WidgetCornerRadius = Math.Max(0.0, Math.Min(32.0, WidgetCornerRadius));
+            WidgetOpacity = Math.Max(0.20, Math.Min(1.0, WidgetOpacity));
         }
     }
 
@@ -331,6 +363,15 @@ namespace AntigravityBootOverlay
                         c.PauseOnBatterySaver = B(d, "pauseOnBatterySaver", c.PauseOnBatterySaver);
                         c.ShowTrayIcon = B(d, "showTrayIcon", c.ShowTrayIcon);
                         c.LockedWindowHwnd = L(d, "lockedWindowHwnd", c.LockedWindowHwnd);
+                        c.DisplayMode = S(d, "displayMode", c.DisplayMode);
+                        c.WidgetAnchor = S(d, "widgetAnchor", c.WidgetAnchor);
+                        c.WidgetOffsetX = D(d, "widgetOffsetX", c.WidgetOffsetX);
+                        c.WidgetOffsetY = D(d, "widgetOffsetY", c.WidgetOffsetY);
+                        c.WidgetWidth = D(d, "widgetWidth", c.WidgetWidth);
+                        c.WidgetHeight = D(d, "widgetHeight", c.WidgetHeight);
+                        c.WidgetCornerRadius = D(d, "widgetCornerRadius", c.WidgetCornerRadius);
+                        c.WidgetOpacity = D(d, "widgetOpacity", c.WidgetOpacity);
+                        c.WidgetClickThrough = B(d, "widgetClickThrough", c.WidgetClickThrough);
                         object procs;
                         if (d.TryGetValue("targetProcesses", out procs) && procs is object[])
                         {
@@ -387,6 +428,15 @@ namespace AntigravityBootOverlay
             dict["showTrayIcon"] = c.ShowTrayIcon;
             dict["targetProcesses"] = c.TargetProcesses.ToArray();
             dict["lockedWindowHwnd"] = c.LockedWindowHwnd;
+            dict["displayMode"] = c.DisplayMode;
+            dict["widgetAnchor"] = c.WidgetAnchor;
+            dict["widgetOffsetX"] = Math.Round(c.WidgetOffsetX, 1);
+            dict["widgetOffsetY"] = Math.Round(c.WidgetOffsetY, 1);
+            dict["widgetWidth"] = Math.Round(c.WidgetWidth, 1);
+            dict["widgetHeight"] = Math.Round(c.WidgetHeight, 1);
+            dict["widgetCornerRadius"] = Math.Round(c.WidgetCornerRadius, 1);
+            dict["widgetOpacity"] = Math.Round(c.WidgetOpacity, 3);
+            dict["widgetClickThrough"] = c.WidgetClickThrough;
             return dict;
         }
 

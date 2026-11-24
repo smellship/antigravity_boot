@@ -12,6 +12,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
@@ -38,7 +39,7 @@ namespace AntigravityBootOverlay
             if (string.IsNullOrEmpty(fontPath) || !File.Exists(fontPath)) return;
             try
             {
-                string dir = Path.GetDirectoryName(fontPath);
+                string dir = System.IO.Path.GetDirectoryName(fontPath);
                 if (!string.IsNullOrEmpty(dir))
                 {
                     SubFont = new FontFamily(new Uri(dir.TrimEnd('\\') + "\\"), "./#Libre Bodoni");
@@ -71,7 +72,7 @@ namespace AntigravityBootOverlay
             double h = ActualHeight;
             double refW = Make(RefText, 100).WidthIncludingTrailingWhitespace;
             double size = refW > 0 ? w * WidthRatio * 100.0 / refW : 24.0;
-            size = Math.Max(18.0, Math.Min(size, h * 0.09));
+            size = Math.Max(11.0, Math.Min(size, h * 0.095));
             var ft = Make(text, size);
             double x = (w - ft.Width) / 2.0;
             double y = h * 0.85 - ft.Height / 2.0;
@@ -86,6 +87,7 @@ namespace AntigravityBootOverlay
     public class StageSnapshot
     {
         public string Phase;
+        public string DisplayMode;
         public string ThemeId;
         public string ThemeName;
         public string Kind;
@@ -110,9 +112,15 @@ namespace AntigravityBootOverlay
         readonly bool withIntro;
         readonly Action onDone;
 
+        public Action OnReplayRequested;
+        public Action OnNextThemeRequested;
+        public Action OnToggleModeRequested;
+        public Action<AppConfig> OnGeometryCommitted;
+
         Window overlay;
         IntPtr overlayH;
-        Grid root, contentGrid;
+        Grid root, innerHost, mediaHost, contentGrid;
+        Border cardFrame, skipBtn, hoverHud, resizeGrip;
         int styleFixes;
 
         // Video elements
@@ -133,7 +141,7 @@ namespace AntigravityBootOverlay
         // Watchdog & power events
         readonly Stopwatch clock = Stopwatch.StartNew();
         long nextSampleMs, lastSampleMs, lastMoveMs, lastRecoverMs = -1, pendingAt;
-        long nextPowerCheckMs;
+        long nextPowerCheckMs, nextProcRenderMs;
         double lastPos = -1;
         int laps, recoveries, failStreak, missedEnds;
         bool verifying;
@@ -146,12 +154,29 @@ namespace AntigravityBootOverlay
 
         // UI & fades
         SubtitleElement sub;
-        Border skipBtn;
         DispatcherTimer tick;
         int currentSub = -1;
         bool introGone, hidden, batteryPaused;
         string pausedReason = "";
-        Native.RECT lastRect;
+
+        Native.RECT lastTargetBounds;
+        Native.RECT currentOverlayRect;
+        double currentCornerRadius;
+
+        // Smooth morph state
+        bool isMorphing;
+        bool morphToDocked;
+        Native.RECT morphFromRect;
+        double morphFromCorner;
+        double morphToCorner;
+        DateTime morphT0;
+        double morphDur = 0.85;
+
+        // Drag / resize state
+        bool isDragging;
+        string dragMode;
+        Native.POINT dragStartCursor;
+        Native.RECT dragStartRect;
 
         double alpha, alphaFrom, alphaTo;
         DateTime alphaT0;
@@ -167,6 +192,74 @@ namespace AntigravityBootOverlay
         long elapsedBaseMs;
         DateTime? pausedClockAt;
 
+        static readonly SolidColorBrush InteractiveHitBrush = CreateHitBrush();
+        static readonly SolidColorBrush CardBorderBrush = CreateCardBorderBrush();
+
+        static SolidColorBrush CreateHitBrush()
+        {
+            var b = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0));
+            b.Freeze();
+            return b;
+        }
+
+        static SolidColorBrush CreateCardBorderBrush()
+        {
+            var b = new SolidColorBrush(Color.FromArgb(105, 148, 163, 184));
+            b.Freeze();
+            return b;
+        }
+
+        public static Native.RECT ComputeWidgetRect(Native.RECT targetRect, AppConfig cfg, double dpiScale)
+        {
+            int tw = Math.Max(180, targetRect.Right - targetRect.Left);
+            int th = Math.Max(140, targetRect.Bottom - targetRect.Top);
+            int w = Math.Max(120, Math.Min(tw - 16, (int)Math.Round(cfg.WidgetWidth * dpiScale)));
+            int h = Math.Max(72, Math.Min(th - 16, (int)Math.Round(cfg.WidgetHeight * dpiScale)));
+            int ox = (int)Math.Round(cfg.WidgetOffsetX * dpiScale);
+            int oy = (int)Math.Round(cfg.WidgetOffsetY * dpiScale);
+
+            int left = targetRect.Left + ox;
+            int top = targetRect.Bottom - oy - h;
+            string anchor = cfg.WidgetAnchor ?? "bottom-left";
+            if (anchor == "bottom-right")
+            {
+                left = targetRect.Right - ox - w;
+                top = targetRect.Bottom - oy - h;
+            }
+            else if (anchor == "top-left")
+            {
+                left = targetRect.Left + ox;
+                top = targetRect.Top + oy;
+            }
+            else if (anchor == "top-right")
+            {
+                left = targetRect.Right - ox - w;
+                top = targetRect.Top + oy;
+            }
+
+            left = Math.Max(targetRect.Left + 4, Math.Min(targetRect.Right - w - 4, left));
+            top = Math.Max(targetRect.Top + 4, Math.Min(targetRect.Bottom - h - 4, top));
+
+            var res = new Native.RECT();
+            res.Left = left;
+            res.Top = top;
+            res.Right = left + w;
+            res.Bottom = top + h;
+            return res;
+        }
+
+        bool IsDockedNow()
+        {
+            if (config.DisplayMode == "fullscreen") return false;
+            if (config.DisplayMode == "widget-always") return true;
+            return phase != PlayPhase.Intro || isMorphing && morphToDocked;
+        }
+
+        bool IsInteractiveDocked()
+        {
+            return IsDockedNow() && !config.WidgetClickThrough && phase != PlayPhase.Ending && phase != PlayPhase.Done;
+        }
+
         public OverlayStage(WindowInfo target, ThemeDefinition theme, AppConfig cfg, bool playIntroMode, Action onDoneCallback)
         {
             Target = target;
@@ -176,10 +269,27 @@ namespace AntigravityBootOverlay
             onDone = onDoneCallback;
 
             contentGrid = new Grid { Background = Brushes.Transparent, ClipToBounds = true };
+            mediaHost = new Grid { Background = Brushes.Transparent, ClipToBounds = true };
+            mediaHost.Children.Add(contentGrid);
+            mediaHost.SizeChanged += delegate { UpdateCardClip(currentCornerRadius); };
+
+            innerHost = new Grid { Background = Brushes.Transparent };
+            innerHost.Children.Add(mediaHost);
+
+            cardFrame = new Border
+            {
+                Background = Brushes.Transparent,
+                BorderBrush = CardBorderBrush,
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(0),
+                Child = innerHost
+            };
+
             root = new Grid { Background = Brushes.Transparent };
-            root.Children.Add(contentGrid);
+            root.Children.Add(cardFrame);
 
             SetupVisualLayer();
+            SetupControls();
 
             overlay = new Window
             {
@@ -197,8 +307,19 @@ namespace AntigravityBootOverlay
                 Title = "Antigravity Boot Studio Overlay"
             };
 
-            clickThrough = !withIntro;
-            alpha = withIntro ? 1.0 : 0.0;
+            bool startDocked = (config.DisplayMode == "widget-always") || (!withIntro && config.DisplayMode == "widget");
+            if (startDocked)
+            {
+                currentCornerRadius = config.WidgetCornerRadius;
+                clickThrough = config.WidgetClickThrough;
+                alpha = withIntro ? 1.0 : 0.0;
+            }
+            else
+            {
+                currentCornerRadius = 0;
+                clickThrough = !withIntro;
+                alpha = withIntro ? 1.0 : 0.0;
+            }
             contentGrid.Opacity = alpha;
 
             overlay.SourceInitialized += delegate
@@ -216,43 +337,11 @@ namespace AntigravityBootOverlay
                 Native.SetLong(overlayH, Native.GWLP_HWNDPARENT, Target.Handle.ToInt64());
             };
 
-            if (withIntro)
-            {
-                sub = new SubtitleElement { WidthRatio = Theme.SubtitleWidthRatio };
-                if (!string.IsNullOrEmpty(Theme.FontPath)) sub.LoadCustomFont(Theme.FontPath);
-                if (Theme.Subtitles != null && Theme.Subtitles.Count > 0) sub.RefText = Theme.Subtitles[0].Text;
-                root.Children.Add(sub);
-
-                skipBtn = new Border
-                {
-                    Width = 76,
-                    Height = 28,
-                    CornerRadius = new CornerRadius(14),
-                    Background = new SolidColorBrush(Color.FromArgb(128, 12, 16, 30)),
-                    BorderBrush = new SolidColorBrush(Color.FromArgb(110, 186, 230, 253)),
-                    BorderThickness = new Thickness(1),
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    VerticalAlignment = VerticalAlignment.Top,
-                    Margin = new Thickness(0, 44, 18, 0),
-                    Cursor = Cursors.Hand,
-                    Child = new TextBlock
-                    {
-                        Text = "跳过 ›",
-                        Foreground = Brushes.White,
-                        FontSize = 13,
-                        FontWeight = FontWeights.Medium,
-                        FontFamily = new FontFamily("Microsoft YaHei UI"),
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center
-                    }
-                };
-                skipBtn.MouseLeftButtonUp += delegate { SkipIntro(); };
-                root.Children.Add(skipBtn);
-            }
-
             overlay.Show();
             EnsureOverlayStyle(true);
+            UpdateDockDecorations();
             Follow(true);
+            UpdateCardClip(currentCornerRadius);
 
             StartPlayback();
 
@@ -279,6 +368,268 @@ namespace AntigravityBootOverlay
             tick.Start();
         }
 
+        void SetupControls()
+        {
+            if (withIntro)
+            {
+                sub = new SubtitleElement { WidthRatio = Theme.SubtitleWidthRatio };
+                if (!string.IsNullOrEmpty(Theme.FontPath)) sub.LoadCustomFont(Theme.FontPath);
+                if (Theme.Subtitles != null && Theme.Subtitles.Count > 0) sub.RefText = Theme.Subtitles[0].Text;
+                innerHost.Children.Add(sub);
+
+                bool compactSkip = (config.DisplayMode == "widget-always");
+                skipBtn = new Border
+                {
+                    Width = compactSkip ? 58 : 76,
+                    Height = compactSkip ? 22 : 28,
+                    CornerRadius = new CornerRadius(14),
+                    Background = new SolidColorBrush(Color.FromArgb(145, 12, 16, 30)),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(115, 186, 230, 253)),
+                    BorderThickness = new Thickness(1),
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Margin = compactSkip ? new Thickness(0, 8, 8, 0) : new Thickness(0, 44, 18, 0),
+                    Cursor = Cursors.Hand,
+                    Child = new TextBlock
+                    {
+                        Text = "跳过 ›",
+                        Foreground = Brushes.White,
+                        FontSize = compactSkip ? 11 : 13,
+                        FontWeight = FontWeights.Medium,
+                        FontFamily = new FontFamily("Microsoft YaHei UI"),
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center
+                    }
+                };
+                skipBtn.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e) { e.Handled = true; };
+                skipBtn.MouseLeftButtonUp += delegate(object s, MouseButtonEventArgs e) { e.Handled = true; SkipIntro(); };
+                innerHost.Children.Add(skipBtn);
+            }
+
+            // 悬停快捷播控栏（仅挂件交互模式可见）
+            var hudPanel = new StackPanel { Orientation = Orientation.Horizontal };
+            hudPanel.Children.Add(MakeHudButton("▶", "重播开屏动画", delegate { if (OnReplayRequested != null) OnReplayRequested(); }));
+            hudPanel.Children.Add(MakeHudButton("⤢", "切换 挂件 / 全屏模式", delegate { if (OnToggleModeRequested != null) OnToggleModeRequested(); }));
+            hudPanel.Children.Add(MakeHudButton("⏭", "切换下一个主题", delegate { if (OnNextThemeRequested != null) OnNextThemeRequested(); }));
+            hudPanel.Children.Add(MakeHudButton("✕", "关闭浮层", delegate { Finish(true); }));
+
+            hoverHud = new Border
+            {
+                CornerRadius = new CornerRadius(12),
+                Background = new SolidColorBrush(Color.FromArgb(195, 10, 15, 32)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(95, 186, 230, 253)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(5, 3, 5, 3),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 0, 8),
+                Opacity = 0,
+                Visibility = Visibility.Collapsed,
+                Child = hudPanel
+            };
+            hoverHud.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e) { e.Handled = true; };
+            innerHost.Children.Add(hoverHud);
+
+            // 右下角缩放手柄
+            var gripPath = new System.Windows.Shapes.Path
+            {
+                Data = Geometry.Parse("M 11 3 L 11 11 L 3 11 Z"),
+                Fill = new SolidColorBrush(Color.FromArgb(185, 226, 232, 240)),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 4, 4)
+            };
+            resizeGrip = new Border
+            {
+                Width = 18,
+                Height = 18,
+                Background = Brushes.Transparent,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Cursor = Cursors.SizeNWSE,
+                ToolTip = "拖动调整挂件大小（按住 Shift 锁定 16:9）",
+                Opacity = 0,
+                Visibility = Visibility.Collapsed,
+                Child = gripPath
+            };
+            resizeGrip.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                if (!IsInteractiveDocked()) return;
+                e.Handled = true;
+                StartDrag("resize", resizeGrip);
+            };
+            innerHost.Children.Add(resizeGrip);
+
+            // 鼠标悬停显示 HUD 与拖动挂件位置
+            cardFrame.MouseEnter += delegate { SetHudVisible(true); };
+            cardFrame.MouseLeave += delegate { if (!isDragging) SetHudVisible(false); };
+            cardFrame.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                if (!IsInteractiveDocked() || e.Handled) return;
+                StartDrag("move", cardFrame);
+            };
+        }
+
+        Border MakeHudButton(string glyph, string tip, Action onClick)
+        {
+            var tb = new TextBlock
+            {
+                Text = glyph,
+                Foreground = Brushes.White,
+                FontSize = 11.5,
+                FontFamily = new FontFamily("Segoe UI Symbol, Microsoft YaHei UI"),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var b = new Border
+            {
+                Width = 24,
+                Height = 20,
+                CornerRadius = new CornerRadius(7),
+                Background = Brushes.Transparent,
+                Margin = new Thickness(1, 0, 1, 0),
+                Cursor = Cursors.Hand,
+                ToolTip = tip,
+                Child = tb
+            };
+            b.MouseEnter += delegate { b.Background = new SolidColorBrush(Color.FromArgb(95, 96, 165, 250)); };
+            b.MouseLeave += delegate { b.Background = Brushes.Transparent; };
+            b.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e) { e.Handled = true; };
+            b.MouseLeftButtonUp += delegate(object s, MouseButtonEventArgs e) { e.Handled = true; onClick(); };
+            return b;
+        }
+
+        void SetHudVisible(bool show)
+        {
+            if (hoverHud == null || resizeGrip == null) return;
+            if (!IsInteractiveDocked()) show = false;
+            double target = show ? 1.0 : 0.0;
+            var dur = TimeSpan.FromSeconds(show ? 0.14 : 0.22);
+            hoverHud.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(target, dur));
+            resizeGrip.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(target, dur));
+        }
+
+        void UpdateDockDecorations()
+        {
+            bool docked = IsDockedNow();
+            bool interactive = IsInteractiveDocked();
+            cardFrame.Background = interactive ? InteractiveHitBrush : Brushes.Transparent;
+            cardFrame.Cursor = interactive ? Cursors.SizeAll : Cursors.Arrow;
+            if (hoverHud != null) hoverHud.Visibility = interactive ? Visibility.Visible : Visibility.Collapsed;
+            if (resizeGrip != null) resizeGrip.Visibility = interactive ? Visibility.Visible : Visibility.Collapsed;
+            if (procStage != null) procStage.IsDockedWidget = docked;
+            UpdateCardClip(currentCornerRadius);
+        }
+
+        void UpdateCardClip(double radiusDip)
+        {
+            currentCornerRadius = Math.Max(0, radiusDip);
+            if (cardFrame != null)
+            {
+                cardFrame.CornerRadius = new CornerRadius(currentCornerRadius);
+                cardFrame.BorderThickness = new Thickness(currentCornerRadius > 0.5 ? 1.0 : 0.0);
+            }
+            if (mediaHost != null)
+            {
+                double w = mediaHost.ActualWidth;
+                double h = mediaHost.ActualHeight;
+                if (w > 2 && h > 2 && currentCornerRadius > 0.5)
+                {
+                    mediaHost.Clip = new RectangleGeometry(new Rect(0, 0, w, h), currentCornerRadius, currentCornerRadius);
+                }
+                else
+                {
+                    mediaHost.Clip = null;
+                }
+            }
+        }
+
+        void StartDrag(string mode, UIElement captureEl)
+        {
+            isDragging = true;
+            dragMode = mode;
+            Native.GetCursorPos(out dragStartCursor);
+            dragStartRect = currentOverlayRect;
+            captureEl.CaptureMouse();
+        }
+
+        void UpdateDrag()
+        {
+            if (!isDragging) return;
+            if (Mouse.LeftButton != MouseButtonState.Pressed)
+            {
+                CommitDrag();
+                return;
+            }
+            Native.POINT cur;
+            Native.GetCursorPos(out cur);
+            int dx = cur.X - dragStartCursor.X;
+            int dy = cur.Y - dragStartCursor.Y;
+
+            Native.RECT bounds = lastTargetBounds;
+            if (bounds.Right <= bounds.Left) return;
+
+            if (dragMode == "move")
+            {
+                int w = dragStartRect.Right - dragStartRect.Left;
+                int h = dragStartRect.Bottom - dragStartRect.Top;
+                int nx = Math.Max(bounds.Left + 4, Math.Min(bounds.Right - w - 4, dragStartRect.Left + dx));
+                int ny = Math.Max(bounds.Top + 4, Math.Min(bounds.Bottom - h - 4, dragStartRect.Top + dy));
+                ApplyOverlayPos(nx, ny, w, h);
+            }
+            else if (dragMode == "resize")
+            {
+                double scale = Native.GetWindowDpiScale(Target.Handle);
+                int curW = dragStartRect.Right - dragStartRect.Left;
+                int curH = dragStartRect.Bottom - dragStartRect.Top;
+                int minW = (int)Math.Round(140 * scale);
+                int maxW = Math.Max(minW, Math.Min(bounds.Right - dragStartRect.Left - 4, (int)Math.Round(720 * scale)));
+                int minH = (int)Math.Round(80 * scale);
+                int maxH = Math.Max(minH, Math.Min(bounds.Bottom - dragStartRect.Top - 4, (int)Math.Round(480 * scale)));
+                int nw = Math.Max(minW, Math.Min(maxW, curW + dx));
+                int nh = Math.Max(minH, Math.Min(maxH, curH + dy));
+                if ((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift)
+                {
+                    nh = Math.Max(minH, Math.Min(maxH, (int)Math.Round(nw * 9.0 / 16.0)));
+                }
+                ApplyOverlayPos(dragStartRect.Left, dragStartRect.Top, nw, nh);
+                UpdateCardClip(currentCornerRadius);
+            }
+        }
+
+        void CommitDrag()
+        {
+            if (!isDragging) return;
+            isDragging = false;
+            try { cardFrame.ReleaseMouseCapture(); } catch { }
+            try { if (resizeGrip != null) resizeGrip.ReleaseMouseCapture(); } catch { }
+
+            Native.RECT bounds = lastTargetBounds;
+            if (bounds.Right <= bounds.Left || currentOverlayRect.Right <= currentOverlayRect.Left) return;
+
+            double scale = Native.GetWindowDpiScale(Target.Handle);
+            if (scale <= 0) scale = 1.0;
+
+            int w = currentOverlayRect.Right - currentOverlayRect.Left;
+            int h = currentOverlayRect.Bottom - currentOverlayRect.Top;
+            double cx = (currentOverlayRect.Left + currentOverlayRect.Right) * 0.5;
+            double cy = (currentOverlayRect.Top + currentOverlayRect.Bottom) * 0.5;
+            double tcx = (bounds.Left + bounds.Right) * 0.5;
+            double tcy = (bounds.Top + bounds.Bottom) * 0.5;
+
+            bool rightHalf = cx > tcx;
+            bool topHalf = cy < tcy;
+            config.WidgetAnchor = (topHalf ? "top-" : "bottom-") + (rightHalf ? "right" : "left");
+            config.WidgetOffsetX = Math.Round((rightHalf ? (bounds.Right - currentOverlayRect.Right) : (currentOverlayRect.Left - bounds.Left)) / scale, 1);
+            config.WidgetOffsetY = Math.Round((topHalf ? (currentOverlayRect.Top - bounds.Top) : (bounds.Bottom - currentOverlayRect.Bottom)) / scale, 1);
+            config.WidgetWidth = Math.Round(w / scale, 1);
+            config.WidgetHeight = Math.Round(h / scale, 1);
+            config.Clamp();
+
+            if (OnGeometryCommitted != null) OnGeometryCommitted(config);
+            Log.W("挂件位置/尺寸已保存：" + config.WidgetAnchor + " offset=(" + config.WidgetOffsetX + "," + config.WidgetOffsetY + ") size=" + config.WidgetWidth + "x" + config.WidgetHeight);
+        }
+
         void SetupVisualLayer()
         {
             if (Theme.Kind == "procedural")
@@ -287,6 +638,7 @@ namespace AntigravityBootOverlay
                 procStage.FadeStartSeconds = Theme.FadeStartSeconds;
                 procStage.FadeDurationSeconds = Theme.FadeDurationSeconds;
                 procStage.IsLoopOnly = !withIntro;
+                procStage.IsDockedWidget = IsDockedNow();
                 contentGrid.Children.Add(procStage);
                 return;
             }
@@ -297,7 +649,7 @@ namespace AntigravityBootOverlay
                 {
                     var bmp = new BitmapImage();
                     bmp.BeginInit();
-                    bmp.UriSource = new Uri(Path.GetFullPath(Theme.ImagePath), UriKind.Absolute);
+                    bmp.UriSource = new Uri(System.IO.Path.GetFullPath(Theme.ImagePath), UriKind.Absolute);
                     bmp.CacheOption = BitmapCacheOption.OnLoad;
                     bmp.EndInit();
                     bmp.Freeze();
@@ -317,7 +669,7 @@ namespace AntigravityBootOverlay
                 {
                     Log.W("加载图片主题失败，回退内置星穹极光：" + ex.Message);
                     Theme = ThemeDefinition.BuiltinStellarAurora();
-                    procStage = new ProceduralStage { IsLoopOnly = !withIntro };
+                    procStage = new ProceduralStage { IsLoopOnly = !withIntro, IsDockedWidget = IsDockedNow() };
                     contentGrid.Children.Add(procStage);
                 }
                 return;
@@ -331,7 +683,7 @@ namespace AntigravityBootOverlay
             {
                 Log.W("视频主题媒体文件不存在，回退内置星穹极光：" + Theme.Id);
                 Theme = ThemeDefinition.BuiltinStellarAurora();
-                procStage = new ProceduralStage { IsLoopOnly = !withIntro };
+                procStage = new ProceduralStage { IsLoopOnly = !withIntro, IsDockedWidget = IsDockedNow() };
                 contentGrid.Children.Add(procStage);
                 return;
             }
@@ -369,18 +721,20 @@ namespace AntigravityBootOverlay
 
         void StartPlayback()
         {
+            double revealedAlpha = IsDockedNow() ? config.WidgetOpacity : config.ResidualAlpha;
             if (Theme.Kind == "procedural" || Theme.Kind == "image")
             {
                 if (withIntro)
                 {
-                    Log.W("开始播放开屏主题：" + Theme.Id + "，目标窗口 " + Target.Hwnd);
+                    Log.W("开始播放开屏主题：" + Theme.Id + "（模式=" + config.DisplayMode + "），目标窗口 " + Target.Hwnd);
                 }
                 else
                 {
                     introGone = true;
                     phase = PlayPhase.Revealed;
-                    RampAlpha(config.ResidualAlpha, Theme.FadeDurationSeconds, null);
-                    Log.W("直接开启循环背景主题：" + Theme.Id + "，目标窗口 " + Target.Hwnd);
+                    UpdateDockDecorations();
+                    RampAlpha(revealedAlpha, Theme.FadeDurationSeconds, null);
+                    Log.W("直接开启循环背景主题：" + Theme.Id + "（模式=" + config.DisplayMode + "），目标窗口 " + Target.Hwnd);
                 }
                 return;
             }
@@ -388,7 +742,7 @@ namespace AntigravityBootOverlay
             if (withIntro && introMedia != null)
             {
                 introMedia.Play();
-                Log.W("开始播放视频开屏：" + Theme.Id + "，目标窗口 " + Target.Hwnd);
+                Log.W("开始播放视频开屏：" + Theme.Id + "（模式=" + config.DisplayMode + "），目标窗口 " + Target.Hwnd);
             }
             else if (hasVideoLoop && loopA != null)
             {
@@ -396,8 +750,9 @@ namespace AntigravityBootOverlay
                 loopA.Play();
                 activeLoop = loopA;
                 phase = PlayPhase.Revealed;
-                RampAlpha(config.ResidualAlpha, Theme.FadeDurationSeconds, null);
-                Log.W("直接开启视频循环背景：" + Theme.Id + "，目标窗口 " + Target.Hwnd);
+                UpdateDockDecorations();
+                RampAlpha(revealedAlpha, Theme.FadeDurationSeconds, null);
+                Log.W("直接开启视频循环背景：" + Theme.Id + "（模式=" + config.DisplayMode + "），目标窗口 " + Target.Hwnd);
             }
             else
             {
@@ -419,7 +774,7 @@ namespace AntigravityBootOverlay
                 Stretch = ParseStretch(config.StretchMode),
                 IsMuted = muted,
                 ScrubbingEnabled = muted,
-                Source = new Uri(Path.GetFullPath(path), UriKind.Absolute)
+                Source = new Uri(System.IO.Path.GetFullPath(path), UriKind.Absolute)
             };
             if (muted)
             {
@@ -701,11 +1056,62 @@ namespace AntigravityBootOverlay
             }
         }
 
+        void StartMorph(bool toDocked, double durationSec)
+        {
+            isMorphing = true;
+            morphToDocked = toDocked;
+            morphFromRect = currentOverlayRect;
+            morphFromCorner = currentCornerRadius;
+            morphToCorner = toDocked ? config.WidgetCornerRadius : 0.0;
+            morphT0 = DateTime.UtcNow;
+            morphDur = Math.Max(0.1, durationSec);
+            UpdateDockDecorations();
+        }
+
+        void TickMorph()
+        {
+            if (!isMorphing) return;
+            double p = Math.Min(1.0, (DateTime.UtcNow - morphT0).TotalSeconds / morphDur);
+            double inv = 1.0 - p;
+            double k = 1.0 - inv * inv * inv; // CubicEaseOut
+
+            Native.RECT targetBounds;
+            if (!Native.Bounds(Target.Handle, out targetBounds)) targetBounds = lastTargetBounds;
+            else lastTargetBounds = targetBounds;
+
+            double scale = Native.GetWindowDpiScale(Target.Handle);
+            Native.RECT goal = morphToDocked ? ComputeWidgetRect(targetBounds, config, scale) : targetBounds;
+
+            int l = (int)Math.Round(morphFromRect.Left + (goal.Left - morphFromRect.Left) * k);
+            int t = (int)Math.Round(morphFromRect.Top + (goal.Top - morphFromRect.Top) * k);
+            int r = (int)Math.Round(morphFromRect.Right + (goal.Right - morphFromRect.Right) * k);
+            int b = (int)Math.Round(morphFromRect.Bottom + (goal.Bottom - morphFromRect.Bottom) * k);
+
+            ApplyOverlayPos(l, t, Math.Max(40, r - l), Math.Max(40, b - t));
+            UpdateCardClip(morphFromCorner + (morphToCorner - morphFromCorner) * k);
+
+            if (p >= 1.0)
+            {
+                isMorphing = false;
+                ApplyOverlayPos(goal.Left, goal.Top, goal.Right - goal.Left, goal.Bottom - goal.Top);
+                UpdateCardClip(morphToCorner);
+                UpdateDockDecorations();
+            }
+        }
+
         void Tick()
         {
             if (phase == PlayPhase.Done) return;
+
+            if (isDragging)
+            {
+                UpdateDrag();
+                return;
+            }
+
             Follow(false);
             if (phase == PlayPhase.Done) return;
+            TickMorph();
             EnsureOverlayStyle(false);
 
             long nowMs = clock.ElapsedMilliseconds;
@@ -742,8 +1148,14 @@ namespace AntigravityBootOverlay
             }
             else if (Theme.Kind == "procedural" && procStage != null)
             {
-                procStage.ElapsedSeconds = GetClockSeconds();
-                procStage.InvalidateVisual();
+                // 透出后节流到 30fps（33ms），开屏期全速 60fps
+                int interval = (phase == PlayPhase.Revealed && !isMorphing) ? 33 : 0;
+                if (nowMs >= nextProcRenderMs)
+                {
+                    nextProcRenderMs = nowMs + interval;
+                    procStage.ElapsedSeconds = GetClockSeconds();
+                    procStage.InvalidateVisual();
+                }
             }
             else if (Theme.Kind == "image" && imgScale != null)
             {
@@ -765,7 +1177,6 @@ namespace AntigravityBootOverlay
                 UpdateSubtitle(t);
             }
 
-            // 透明度渐变或智能专注变淡
             if (alphaDur >= 0)
             {
                 double k = alphaDur <= 0 ? 1.0 : Math.Min(1.0, (DateTime.Now - alphaT0).TotalSeconds / alphaDur);
@@ -798,7 +1209,8 @@ namespace AntigravityBootOverlay
 
         double ComputeTargetAmbientAlpha()
         {
-            double baseAlpha = config.ResidualAlpha;
+            double baseAlpha = IsDockedNow() ? config.WidgetOpacity : config.ResidualAlpha;
+            if (IsDockedNow()) return baseAlpha; // 挂件本身在侧边栏角落，不挡代码，专注时无需压暗
             if (!config.FocusDimEnabled) return baseAlpha;
             if (DateTime.UtcNow < sliderBoostUntil) return baseAlpha;
             bool isFocused = Native.GetForegroundWindow() == Target.Handle;
@@ -806,6 +1218,19 @@ namespace AntigravityBootOverlay
             double idle = Native.IdleSeconds();
             if (idle < config.FocusIdleSeconds) return baseAlpha * config.FocusDimFactor;
             return baseAlpha;
+        }
+
+        void ApplyOverlayPos(int left, int top, int width, int height)
+        {
+            currentOverlayRect.Left = left;
+            currentOverlayRect.Top = top;
+            currentOverlayRect.Right = left + width;
+            currentOverlayRect.Bottom = top + height;
+            if (overlayH != IntPtr.Zero)
+            {
+                uint f = Native.SWP_NOZORDER | Native.SWP_NOACTIVATE | Native.SWP_NOOWNERZORDER;
+                Native.SetWindowPos(overlayH, IntPtr.Zero, left, top, width, height, f);
+            }
         }
 
         void Follow(bool force)
@@ -835,13 +1260,20 @@ namespace AntigravityBootOverlay
                 force = true;
             }
 
-            Native.RECT r;
-            if (!Native.Bounds(Target.Handle, out r)) return;
-            if (!force && r.Left == lastRect.Left && r.Top == lastRect.Top && r.Right == lastRect.Right && r.Bottom == lastRect.Bottom) return;
-            lastRect = r;
-            uint f = Native.SWP_NOZORDER | Native.SWP_NOACTIVATE | Native.SWP_NOOWNERZORDER;
-            if (overlayH != IntPtr.Zero)
-                Native.SetWindowPos(overlayH, IntPtr.Zero, r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top, f);
+            if (isMorphing || isDragging) return;
+
+            Native.RECT targetR;
+            if (!Native.Bounds(Target.Handle, out targetR)) return;
+            lastTargetBounds = targetR;
+
+            double scale = Native.GetWindowDpiScale(Target.Handle);
+            Native.RECT desired = IsDockedNow() ? ComputeWidgetRect(targetR, config, scale) : targetR;
+
+            if (!force && desired.Left == currentOverlayRect.Left && desired.Top == currentOverlayRect.Top
+                && desired.Right == currentOverlayRect.Right && desired.Bottom == currentOverlayRect.Bottom)
+                return;
+
+            ApplyOverlayPos(desired.Left, desired.Top, desired.Right - desired.Left, desired.Bottom - desired.Top);
         }
 
         void ShowAll(bool show)
@@ -855,7 +1287,8 @@ namespace AntigravityBootOverlay
             long ex = Native.GetLong(overlayH, Native.GWL_EXSTYLE);
             long want = (ex | Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE) & ~Native.WS_EX_APPWINDOW;
             if (clickThrough) want |= Native.WS_EX_TRANSPARENT;
-            if (want != ex && styleFixes < 20)
+            else want &= ~Native.WS_EX_TRANSPARENT;
+            if (want != ex && styleFixes < 40)
             {
                 if (!force) styleFixes++;
                 Native.SetLong(overlayH, Native.GWL_EXSTYLE, want);
@@ -920,25 +1353,49 @@ namespace AntigravityBootOverlay
         {
             if (phase != PlayPhase.Intro) return;
             phase = PlayPhase.Revealed;
-            clickThrough = true;
-            EnsureOverlayStyle(true);
-            contentGrid.Background = Brushes.Transparent;
             CloseSkipButton();
+            contentGrid.Background = Brushes.Transparent;
 
             if (!config.LoopBackground)
             {
+                clickThrough = true;
+                EnsureOverlayStyle(true);
                 Log.W("到达透出节点且未启用循环背景，淡出退出");
                 Finish(false);
                 return;
             }
             if (Theme.Kind == "video" && !hasVideoLoop)
             {
+                clickThrough = true;
+                EnsureOverlayStyle(true);
                 Log.W("视频主题无循环片段，淡出退出");
                 Finish(false);
                 return;
             }
-            Log.W("透出 Antigravity 界面并切换为点击穿透循环背景");
-            RampAlpha(config.ResidualAlpha, quick ? 0.9 : Theme.FadeDurationSeconds, null);
+
+            if (config.DisplayMode == "widget")
+            {
+                clickThrough = config.WidgetClickThrough;
+                EnsureOverlayStyle(true);
+                Log.W("开屏结束，平滑收缩至左下角挂件位");
+                StartMorph(true, quick ? 0.55 : 0.85);
+                RampAlpha(config.WidgetOpacity, quick ? 0.55 : 0.85, null);
+            }
+            else if (config.DisplayMode == "widget-always")
+            {
+                clickThrough = config.WidgetClickThrough;
+                EnsureOverlayStyle(true);
+                UpdateDockDecorations();
+                RampAlpha(config.WidgetOpacity, 0.45, null);
+            }
+            else
+            {
+                clickThrough = true;
+                EnsureOverlayStyle(true);
+                UpdateDockDecorations();
+                Log.W("透出 Antigravity 界面并切换为全屏点击穿透循环背景");
+                RampAlpha(config.ResidualAlpha, quick ? 0.9 : Theme.FadeDurationSeconds, null);
+            }
         }
 
         public void SkipIntro()
@@ -980,6 +1437,7 @@ namespace AntigravityBootOverlay
 
         public void ApplyConfig(AppConfig cfg, bool fromSlider)
         {
+            bool wasDocked = IsDockedNow();
             config = cfg;
             if (fromSlider) sliderBoostUntil = DateTime.UtcNow.AddSeconds(3.0);
             if (phase == PlayPhase.Ending || phase == PlayPhase.Done) return;
@@ -990,10 +1448,36 @@ namespace AntigravityBootOverlay
             if (loopB != null) loopB.Stretch = st;
             if (imgView != null) imgView.Stretch = st;
 
-            if (phase == PlayPhase.Revealed && alphaDur < 0)
+            bool shouldDocked = IsDockedNow();
+            if (phase == PlayPhase.Revealed)
             {
-                SetAlpha(fromSlider ? cfg.ResidualAlpha : ComputeTargetAmbientAlpha());
+                clickThrough = shouldDocked ? cfg.WidgetClickThrough : true;
+                EnsureOverlayStyle(true);
+                if (shouldDocked != wasDocked)
+                {
+                    StartMorph(shouldDocked, 0.45);
+                }
+                else
+                {
+                    UpdateDockDecorations();
+                    if (shouldDocked)
+                    {
+                        UpdateCardClip(cfg.WidgetCornerRadius);
+                        Follow(true);
+                    }
+                }
+                if (alphaDur < 0)
+                {
+                    SetAlpha(fromSlider ? (shouldDocked ? cfg.WidgetOpacity : cfg.ResidualAlpha) : ComputeTargetAmbientAlpha());
+                }
             }
+            else if (phase == PlayPhase.Intro && shouldDocked != wasDocked)
+            {
+                clickThrough = shouldDocked ? cfg.WidgetClickThrough : false;
+                EnsureOverlayStyle(true);
+                StartMorph(shouldDocked, 0.45);
+            }
+
             if (introMedia != null && !introGone)
             {
                 volDur = -1;
@@ -1012,6 +1496,7 @@ namespace AntigravityBootOverlay
             phase = PlayPhase.Ending;
             clickThrough = true;
             EnsureOverlayStyle(true);
+            UpdateDockDecorations();
             double d = fast ? 0.35 : 1.1;
             CloseSkipButton();
             HideSubtitles();
@@ -1071,12 +1556,13 @@ namespace AntigravityBootOverlay
         {
             var snap = new StageSnapshot();
             snap.Phase = phase.ToString().ToLowerInvariant();
+            snap.DisplayMode = config != null ? config.DisplayMode : "widget";
             snap.ThemeId = Theme != null ? Theme.Id : "";
             snap.ThemeName = Theme != null ? Theme.Name : "";
             snap.Kind = Theme != null ? Theme.Kind : "";
             snap.TargetHwnd = Target != null ? Target.Hwnd : 0;
             snap.TargetTitle = Target != null ? (Target.Title ?? "") : "";
-            snap.TargetSize = (lastRect.Right - lastRect.Left) + "x" + (lastRect.Bottom - lastRect.Top);
+            snap.TargetSize = (currentOverlayRect.Right - currentOverlayRect.Left) + "x" + (currentOverlayRect.Bottom - currentOverlayRect.Top);
             snap.Laps = laps;
             snap.Recoveries = recoveries;
             snap.EffectiveAlpha = Math.Round(alpha, 3);

@@ -75,7 +75,8 @@ async function main() {
   node scripts/boot_ctl.mjs skip
   node scripts/boot_ctl.mjs stop
   node scripts/boot_ctl.mjs config --set key=value [--set key2=value2]
-  node scripts/boot_ctl.mjs themes list|select <id>|delete <id>
+  node scripts/boot_ctl.mjs themes list|select <id>|next|delete <id>
+  node scripts/boot_ctl.mjs widget reset
   node scripts/boot_ctl.mjs packs list|download <packId>
   node scripts/boot_ctl.mjs custom add --name <name> [--intro <path>] [--loop <path>] [--image <path>] [--fade-start <sec>]
   node scripts/boot_ctl.mjs autostart status|on|off
@@ -167,6 +168,20 @@ async function main() {
       printJson({ ok: true, activeThemeId: cfg.activeThemeId, theme: found, appliedLive: Boolean(live) });
       return;
     }
+    if (sub === 'next') {
+      const live = await callOverlay(dataDir, 'POST', '/next-theme', {});
+      if (live) {
+        printJson(live);
+        return;
+      }
+      const cfg = loadConfig(dataDir);
+      const themes = loadThemes(dataDir);
+      const idx = themes.findIndex((t) => t.id === cfg.activeThemeId);
+      const next = themes[(idx + 1) % themes.length];
+      patchConfig(dataDir, { activeThemeId: next.id });
+      printJson({ ok: true, activeThemeId: next.id, theme: next, appliedLive: false });
+      return;
+    }
     if (sub === 'delete') {
       const id = positional[2];
       const next = deleteTheme(dataDir, id);
@@ -175,6 +190,24 @@ async function main() {
       return;
     }
     throw new Error(`未知 themes 子命令：${sub}`);
+  }
+
+  if (cmd === 'widget') {
+    if (sub === 'reset') {
+      const live = await callOverlay(dataDir, 'POST', '/reset-widget', {});
+      const cfg = patchConfig(dataDir, {
+        displayMode: 'widget',
+        widgetAnchor: 'bottom-left',
+        widgetOffsetX: 12,
+        widgetOffsetY: 52,
+        widgetWidth: 234,
+        widgetHeight: 132,
+        widgetCornerRadius: 12,
+      });
+      printJson({ ok: true, config: cfg, appliedLive: Boolean(live) });
+      return;
+    }
+    throw new Error(`未知 widget 子命令：${sub}`);
   }
 
   if (cmd === 'packs') {

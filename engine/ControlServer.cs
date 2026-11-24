@@ -261,6 +261,14 @@ namespace AntigravityBootOverlay
                     return m;
                 });
             }
+            if (path == "/next-theme" && method == "POST")
+            {
+                return OnUi(delegate { return app.CycleNextTheme(); });
+            }
+            if (path == "/reset-widget" && method == "POST")
+            {
+                return OnUi(delegate { return app.ResetWidgetLayout(); });
+            }
             if (path == "/apply-live" && method == "POST")
             {
                 return OnUi(delegate { return app.ApplyLivePatch(body); });

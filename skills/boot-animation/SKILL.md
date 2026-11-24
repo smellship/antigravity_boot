@@ -26,17 +26,23 @@ node "$env:USERPROFILE\.gemini\config\plugins\antigravity-boot\scripts\boot_ctl.
 | 仅开启半透明循环动态背景 | `node ".../boot_ctl.mjs" play --mode loop` |
 | 跳过当前开屏 / 淡出关闭浮层 | `node ".../boot_ctl.mjs" skip` 或 `stop` |
 | 实时调透明度 / 音量 / 专注变淡 | `node ".../boot_ctl.mjs" config --set residualAlpha=0.18 --set focusDimEnabled=true` |
-| 列出 / 切换本地主题 | `node ".../boot_ctl.mjs" themes list` / `themes select <id>` |
+| 列出 / 切换本地主题 | `node ".../boot_ctl.mjs" themes list` / `themes select <id>` / `themes next` |
+| 挂件归位左下角 (Settings 上方) | `node ".../boot_ctl.mjs" widget reset` |
 | 列出 / 下载官方同人素材包 | `node ".../boot_ctl.mjs" packs list` / `packs download gemini-twinblades` |
 | 添加自定义本地视频或壁纸主题 | `node ".../boot_ctl.mjs" custom add --name "<名称>" --intro "<路径>" --loop "<路径>"`（或 `--image "<路径>"`） |
 | 开关 Windows 极速抢跑开机自启 | `node ".../boot_ctl.mjs" autostart on` / `off` / `status` |
 
 ## 2. 常见可配置项（`config --set`）
 
+- `displayMode`: `widget`（开屏全屏后平滑缩进左下角挂件，默认）/ `widget-always`（全程小窗）/ `fullscreen`（全屏半透明背景）
+- `widgetAnchor`: `bottom-left`（默认，贴在左下角 Settings 上方）/ `bottom-right` / `top-left` / `top-right`
+- `widgetOffsetX` / `widgetOffsetY` / `widgetWidth` / `widgetHeight` / `widgetCornerRadius`: 挂件偏移与尺寸圆角（单位 DIP，默认 `12, 52, 234, 132, 12`）
+- `widgetOpacity`: `0.2` ~ `1.0`（挂件清晰度，默认 `0.94`）
+- `widgetClickThrough`: `true` / `false`（关闭时可鼠标悬停快捷播控 & 直接拖动位置/右下角调大小）
 - `playIntro`: `true` / `false`（启动 Antigravity 时是否播开屏）
-- `loopBackground`: `true` / `false`（透出后是否保留循环背景）
+- `loopBackground`: `true` / `false`（透出后是否保留循环背景/挂件）
 - `shuffleOnBoot`: `true` / `false`（每次启动在已安装主题间随机轮换）
-- `residualAlpha`: `0.0` ~ `0.8`（循环背景不透明度，推荐 `0.15` ~ `0.28`）
+- `residualAlpha`: `0.0` ~ `0.8`（全屏循环背景不透明度，推荐 `0.15` ~ `0.28`）
 - `introVolume`: `0.0` ~ `1.0`（开屏音量）
 - `stretchMode`: `UniformToFill`（铺满裁切）或 `Uniform`（完整居中）
 - `focusDimEnabled`: `true` / `false`（专心输入代码时自动调淡）

@@ -28,7 +28,30 @@ namespace AntigravityBootOverlay
         public double FadeStartSeconds;
         public double FadeDurationSeconds;
         public bool IsLoopOnly;
+        public bool IsDockedWidget;
         public double BackdropOpacity;
+
+        static readonly FontFamily TitleFont = new FontFamily("Segoe UI");
+        static readonly Typeface TitleTypeface = new Typeface(TitleFont, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
+        static readonly SolidColorBrush WhiteCoreBrush = CreateFrozenBrush(Color.FromArgb(255, 255, 255, 255));
+        static readonly LinearGradientBrush WidgetBackdropBrush = CreateFrozenBackdrop();
+
+        static SolidColorBrush CreateFrozenBrush(Color c)
+        {
+            var b = new SolidColorBrush(c);
+            b.Freeze();
+            return b;
+        }
+
+        static LinearGradientBrush CreateFrozenBackdrop()
+        {
+            var b = new LinearGradientBrush(
+                Color.FromArgb(236, 7, 11, 25),
+                Color.FromArgb(238, 15, 23, 52),
+                new Point(0, 0), new Point(1, 1));
+            b.Freeze();
+            return b;
+        }
 
         public ProceduralStage()
         {
@@ -72,17 +95,24 @@ namespace AntigravityBootOverlay
             double cx = w * 0.5;
             double cy = h * 0.48;
 
-            // 开屏阶段底色不透明，透出阶段底色完全透明只留动态光影
-            double bgOpacity = IsLoopOnly ? 0.0 : (1.0 - Smooth(FadeStartSeconds, FadeStartSeconds + Math.Max(0.2, FadeDurationSeconds), t));
+            // 开屏阶段底色不透明，全屏透出阶段底色完全透明；挂件模式下保留深邃星穹底色
+            double bgOpacity = IsDockedWidget ? 0.94 : (IsLoopOnly ? 0.0 : (1.0 - Smooth(FadeStartSeconds, FadeStartSeconds + Math.Max(0.2, FadeDurationSeconds), t)));
             bgOpacity *= Clamp01(BackdropOpacity);
 
             if (bgOpacity > 0.005)
             {
-                var bgBrush = new LinearGradientBrush(
-                    Color.FromArgb((byte)(bgOpacity * 246), 7, 11, 25),
-                    Color.FromArgb((byte)(bgOpacity * 248), 15, 23, 52),
-                    new Point(0, 0), new Point(1, 1));
-                dc.DrawRectangle(bgBrush, null, new Rect(0, 0, w, h));
+                if (IsDockedWidget && bgOpacity > 0.9)
+                {
+                    dc.DrawRectangle(WidgetBackdropBrush, null, new Rect(0, 0, w, h));
+                }
+                else
+                {
+                    var bgBrush = new LinearGradientBrush(
+                        Color.FromArgb((byte)(bgOpacity * 246), 7, 11, 25),
+                        Color.FromArgb((byte)(bgOpacity * 248), 15, 23, 52),
+                        new Point(0, 0), new Point(1, 1));
+                    dc.DrawRectangle(bgBrush, null, new Rect(0, 0, w, h));
+                }
             }
 
             // 极光星云光晕
@@ -96,10 +126,12 @@ namespace AntigravityBootOverlay
                 minDim * 0.44 * auraPulse, Color.FromArgb((byte)(auraAlpha * 95), 168, 85, 247));
 
             // 流光极光丝带
-            DrawAuroraRibbon(dc, w, h, t, 0.36, 0.08, 0.9, Color.FromArgb((byte)(auraAlpha * 115), 56, 189, 248), 3.2);
-            DrawAuroraRibbon(dc, w, h, t + 1.9, 0.64, -0.07, 0.7, Color.FromArgb((byte)(auraAlpha * 95), 192, 132, 252), 2.6);
+            double ribbonThick = Math.Max(1.4, minDim * 0.0045);
+            DrawAuroraRibbon(dc, w, h, t, 0.36, 0.08, 0.9, Color.FromArgb((byte)(auraAlpha * 115), 56, 189, 248), ribbonThick);
+            DrawAuroraRibbon(dc, w, h, t + 1.9, 0.64, -0.07, 0.7, Color.FromArgb((byte)(auraAlpha * 95), 192, 132, 252), ribbonThick * 0.8);
 
             // 闪烁星尘场
+            double starSizeScale = Math.Max(0.55, Math.Min(1.2, minDim / 360.0));
             for (int i = 0; i < stars.Count; i++)
             {
                 var st = stars[i];
@@ -109,18 +141,19 @@ namespace AntigravityBootOverlay
                 byte a = (byte)(Clamp01(tw * (IsLoopOnly ? 0.78 : 0.95)) * 220);
                 Color col = st.Tone == 0 ? Color.FromArgb(a, 186, 230, 253)
                           : (st.Tone == 1 ? Color.FromArgb(a, 221, 214, 254) : Color.FromArgb(a, 254, 240, 138));
-                dc.DrawEllipse(new SolidColorBrush(col), null, new Point(sx, sy), st.Radius, st.Radius);
+                double r = st.Radius * starSizeScale;
+                dc.DrawEllipse(new SolidColorBrush(col), null, new Point(sx, sy), r, r);
             }
 
             // 轨道环
-            double ringStrength = IsLoopOnly ? 0.48 : Smooth(0.4, 1.8, t) * (1.0 - 0.52 * Smooth(FadeStartSeconds, FadeStartSeconds + 1.0, t));
+            double ringStrength = IsLoopOnly ? (IsDockedWidget ? 0.72 : 0.48) : Smooth(0.4, 1.8, t) * (1.0 - 0.52 * Smooth(FadeStartSeconds, FadeStartSeconds + 1.0, t));
             if (ringStrength > 0.01)
             {
-                double rx = minDim * 0.25;
-                double ry = minDim * 0.095;
+                double rx = minDim * (IsDockedWidget ? 0.32 : 0.25);
+                double ry = minDim * (IsDockedWidget ? 0.12 : 0.095);
                 double rot = -22.0 + 8.0 * Math.Sin(t * 0.35);
                 dc.PushTransform(new RotateTransform(rot, cx, cy));
-                var pen = new Pen(new SolidColorBrush(Color.FromArgb((byte)(ringStrength * 165), 125, 211, 252)), 1.8);
+                var pen = new Pen(new SolidColorBrush(Color.FromArgb((byte)(ringStrength * 165), 125, 211, 252)), Math.Max(1.1, minDim * 0.004));
                 pen.DashStyle = new DashStyle(new double[] { 8, 6 }, t * 18.0);
                 dc.DrawEllipse(null, pen, new Point(cx, cy), rx, ry);
                 dc.Pop();
@@ -128,19 +161,21 @@ namespace AntigravityBootOverlay
 
             // 双光刃弧线 + 四芒星核心（开屏期强烈绽放，进入循环后收束为温和灵动星徽）
             double introFactor = IsLoopOnly ? 0.0 : (1.0 - Smooth(FadeStartSeconds, FadeStartSeconds + 1.1, t));
-            double starScale = IsLoopOnly ? (0.42 + 0.04 * Math.Sin(t * 1.4)) : (0.35 + 0.65 * Smooth(0.3, 1.5, t) - 0.52 * Smooth(FadeStartSeconds, FadeStartSeconds + 1.1, t));
-            double starAlpha = IsLoopOnly ? 0.68 : Smooth(0.15, 1.0, t);
+            double starScale = IsLoopOnly ? (IsDockedWidget ? (0.68 + 0.06 * Math.Sin(t * 1.4)) : (0.42 + 0.04 * Math.Sin(t * 1.4)))
+                : (0.35 + 0.65 * Smooth(0.3, 1.5, t) - 0.52 * Smooth(FadeStartSeconds, FadeStartSeconds + 1.1, t));
+            double starAlpha = IsLoopOnly ? (IsDockedWidget ? 0.90 : 0.68) : Smooth(0.15, 1.0, t);
 
             if (introFactor > 0.02)
             {
                 double sweep = Smooth(0.6, 2.2, t);
                 double arcLen = minDim * 0.22 * sweep;
-                var bladePenA = new Pen(new SolidColorBrush(Color.FromArgb((byte)(introFactor * 220), 125, 211, 252)), Math.Max(2.5, minDim * 0.008));
+                double bladeThick = Math.Max(1.8, minDim * 0.008);
+                var bladePenA = new Pen(new SolidColorBrush(Color.FromArgb((byte)(introFactor * 220), 125, 211, 252)), bladeThick);
                 bladePenA.StartLineCap = PenLineCap.Round;
                 bladePenA.EndLineCap = PenLineCap.Round;
                 dc.DrawLine(bladePenA, new Point(cx - arcLen, cy + arcLen * 0.72), new Point(cx + arcLen, cy - arcLen * 0.72));
 
-                var bladePenB = new Pen(new SolidColorBrush(Color.FromArgb((byte)(introFactor * 210), 216, 180, 254)), Math.Max(2.5, minDim * 0.008));
+                var bladePenB = new Pen(new SolidColorBrush(Color.FromArgb((byte)(introFactor * 210), 216, 180, 254)), bladeThick);
                 bladePenB.StartLineCap = PenLineCap.Round;
                 bladePenB.EndLineCap = PenLineCap.Round;
                 dc.DrawLine(bladePenB, new Point(cx - arcLen, cy - arcLen * 0.72), new Point(cx + arcLen, cy + arcLen * 0.72));
@@ -156,13 +191,13 @@ namespace AntigravityBootOverlay
                 double titleAlpha = Smooth(1.4, 2.1, t) * (1.0 - Smooth(FadeStartSeconds - 0.3, FadeStartSeconds + 0.7, t));
                 if (titleAlpha > 0.01)
                 {
-                    double fontSize = Math.Max(20, Math.Min(48, minDim * 0.055));
+                    double fontSize = Math.Max(10.0, Math.Min(48.0, minDim * 0.058));
 #pragma warning disable 618
                     var ft = new FormattedText(
                         "A N T I G R A V I T Y",
                         CultureInfo.InvariantCulture,
                         FlowDirection.LeftToRight,
-                        new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal),
+                        TitleTypeface,
                         fontSize,
                         new SolidColorBrush(Color.FromArgb((byte)(titleAlpha * 245), 240, 249, 255)));
 #pragma warning restore 618
